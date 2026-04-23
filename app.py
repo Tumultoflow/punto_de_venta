@@ -10,7 +10,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 2. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="TumultoFlow", layout="wide", page_icon="https://www.instagram.com/tumultoflow.shop/")
+st.set_page_config(page_title="TumultoFlow", layout="wide", page_icon="https://scontent-qro1-1.xx.fbcdn.net/v/t39.30808-6/672370450_2181301026017458_8809221436228728782_n.jpg?_nc_cat=104&ccb=1-7&_nc_sid=1d70fc&_nc_ohc=G4OXJCR5mKkQ7kNvwE2uLn_&_nc_oc=AdpqgHNajo1Iaj5vLzgNyeHwCtsTmgXHVc1kInz3YMpvqYm0W8IOOBzUWhWYreZID3ihaf5TLM6aGIz1biUMuNCs&_nc_zt=23&_nc_ht=scontent-qro1-1.xx&_nc_gid=TRqVJnuGypXQl6ze_AFgzA&oh=00_Af0J5kKRYFFv4kFc5SG6fGEgmNHpH0txpoStSDGBNTVouw&oe=69EFD7FC")
 
 # --- 3. SISTEMA DE AUTENTICACIÓN ---
 if "authenticated" not in st.session_state:

@@ -10,7 +10,7 @@ SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJ
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 2. CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Sistema Duo POS", layout="wide", page_icon="📦")
+st.set_page_config(page_title="TumultoFlow", layout="wide", page_icon="📦")
 
 # --- 3. SISTEMA DE AUTENTICACIÓN ---
 if "authenticated" not in st.session_state:

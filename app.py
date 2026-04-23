@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
-from streamlit_barcode_scanner import st_barcode_scanner # Nueva librería
+from streamlit_zxing import st_zxing # Librería estable
 
 # --- 1. CONFIGURACIÓN DE CONEXIÓN ---
 SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
@@ -13,7 +13,6 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 # --- 2. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema Duo POS", layout="wide", page_icon="⚖️")
 
-# --- LOGIN (Simplificado para el ejemplo) ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -33,26 +32,26 @@ if not st.session_state.authenticated:
 role = st.session_state.role
 menu = st.sidebar.radio("Ir a:", ["Ventas", "Inventario", "Reportes"] if role=="admin" else ["Ventas", "Inventario"])
 
-# --- 4. MÓDULO DE VENTAS (Con Escáner) ---
+# --- 4. MÓDULO DE VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     
-    with st.expander("📷 Escanear Código para Venta"):
-        barcode_venta = st_barcode_scanner()
+    with st.expander("📷 Abrir Escáner de Barras"):
+        # Este escáner es más estable y compatible
+        resultado_scan = st_zxing(key='scanner_venta')
+        barcode_venta = resultado_scan['barcode'] if resultado_scan else None
     
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
     productos = res.data
     
     if productos:
         df_prod = pd.DataFrame(productos)
-        
-        # Si escaneó algo, intentamos pre-seleccionar el producto
         indice_default = 0
         if barcode_venta:
             match = df_prod[df_prod['codigo'] == barcode_venta]
             if not match.empty:
                 indice_default = int(match.index[0])
-                st.success(f"Código detectado: {barcode_venta}")
+                st.success(f"Detectado: {barcode_venta}")
 
         col1, col2 = st.columns([1, 1])
         with col1:
@@ -71,20 +70,19 @@ if menu == "Ventas":
                 st.success("Venta Exitosa")
                 st.rerun()
 
-# --- 5. MÓDULO DE INVENTARIO (Con Escáner para Registro) ---
+# --- 5. MÓDULO DE INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     t1, t2 = st.tabs(["Registrar Nuevo", "Existencias"])
     
     with t1:
-        st.subheader("Escanear Código de Barras")
-        # El escáner aparece aquí arriba
-        barcode_nuevo = st_barcode_scanner()
+        with st.expander("📷 Escanear Código Nuevo"):
+            resultado_nuevo = st_zxing(key='scanner_nuevo')
+            barcode_nuevo = resultado_nuevo['barcode'] if resultado_nuevo else ""
         
         with st.form("registro_nube", clear_on_submit=True):
             c1, c2 = st.columns(2)
-            # El código se llena solo si el escáner detecta algo
-            cod = c1.text_input("Código / SKU", value=barcode_nuevo if barcode_nuevo else "")
+            cod = c1.text_input("Código / SKU", value=barcode_nuevo)
             nom = c2.text_input("Nombre del Producto")
             inv = c1.number_input("Costo Inversión", min_value=0.0) if role == "admin" else 0.0
             pub = c2.number_input("Precio Venta", min_value=0.0)
@@ -100,11 +98,13 @@ elif menu == "Inventario":
                         url_foto = supabase.storage.from_("fotos").get_public_url(nombre_img)
                     
                     supabase.table("productos").insert({"codigo": cod, "nombre": nom, "stock": stk, "precio_inv": inv, "precio_pub": pub, "foto_path": url_foto}).execute()
-                    st.success("✅ Guardado")
+                    st.success("✅ Guardado en la nube")
                 except Exception as e: st.error(f"Error: {e}")
 
     with t2:
         res = supabase.table("productos").select("*").execute()
         if res.data:
             df_inv = pd.DataFrame(res.data)
-            st.data_editor(df_inv[['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub']], column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, hide_index=True)
+            st.data_editor(df_inv[['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub']], 
+                           column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, 
+                           hide_index=True, use_container_width=True)

@@ -1,5 +1,5 @@
 streamlit
 pandas
-Pillow
 supabase
 streamlit-barcode-scanner
+Pillow

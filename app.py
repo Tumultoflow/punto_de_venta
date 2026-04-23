@@ -106,44 +106,53 @@ elif menu == "Inventario":
                     }).execute()
                     st.success("Producto registrado")
 
-    # Pestaña Existencias (Admin edita, Equipo solo ve)
+   # Pestaña Existencias (Admin edita, Equipo solo ve)
     idx_ex = 1 if role == "admin" else 0
     with selected_tabs[idx_ex]:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
             
-            # Definir columnas visibles
-            cols = ['id', 'foto_path', 'codigo', 'nombre', 'descripcion', 'precio_pub', 'stock']
-            if role == "admin": cols.insert(4, 'precio_inv')
+            # Forzamos el orden de las columnas para que la descripción sea visible
+            columnas_ordenadas = ['id', 'foto_path', 'codigo', 'nombre', 'descripcion', 'precio_pub', 'stock']
+            if role == "admin":
+                columnas_ordenadas.insert(4, 'precio_inv')
             
-            # Limpiar columnas que no existan en el DF para evitar KeyError
-            cols_finales = [c for c in cols if c in df_i.columns]
+            # Filtro de seguridad: solo columnas que existen en el dataframe
+            cols_finales = [c for c in columnas_ordenadas if c in df_i.columns]
 
-            st.write("💡 **Admin:** Haz doble clic en una celda para editar y presiona el botón de abajo.")
+            st.info("💡 Haz doble clic en cualquier celda para editar (solo Admin).")
             
-            # El editor de datos
+            # Mostramos el editor
             df_editado = st.data_editor(
                 df_i[cols_finales],
                 column_config={
-                    "id": None, # Ocultar ID pero tenerlo disponible
+                    "id": None, # Mantenemos el ID oculto pero funcional
                     "foto_path": st.column_config.ImageColumn("Imagen"),
+                    "descripcion": st.column_config.TextColumn("Descripción", width="large"),
+                    "precio_pub": "Venta ($)",
+                    "precio_inv": "Costo ($)"
                 },
                 hide_index=True,
                 use_container_width=True,
-                disabled=False if role == "admin" else True # Solo admin edita
+                disabled=False if role == "admin" else True
             )
 
             # Botón para guardar cambios (Solo Admin)
             if role == "admin":
                 if st.button("💾 Guardar cambios en Inventario"):
                     for index, row in df_editado.iterrows():
-                        supabase.table("productos").update({
+                        # Preparar datos para actualizar
+                        datos_update = {
                             "nombre": row['nombre'],
-                            "descripcion": row.get('descripcion', ''),
-                            "precio_inv": float(row.get('precio_inv', 0)),
                             "precio_pub": float(row['precio_pub']),
                             "stock": int(row['stock'])
-                        }).eq("id", row['id']).execute()
-                    st.success("¡Inventario actualizado en la nube!")
+                        }
+                        # Solo incluir descripción y costo si las columnas existen
+                        if 'descripcion' in row: datos_update["descripcion"] = row['descripcion']
+                        if 'precio_inv' in row: datos_update["precio_inv"] = float(row['precio_inv'])
+                        
+                        supabase.table("productos").update(datos_update).eq("id", row['id']).execute()
+                    
+                    st.success("¡Cambios guardados con éxito!")
                     st.rerun()

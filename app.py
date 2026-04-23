@@ -3,7 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
 
-# --- 1. CONFIGURACIÓN DE CONEXIÓN ---
+# --- 1. CONEXIÓN ---
 SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -27,10 +27,18 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
+# --- 3. BARRA LATERAL (Menú y Cerrar Sesión) ---
 role = st.session_state.role
+st.sidebar.title(f"Bienvenido, {role.capitalize()}")
 menu = st.sidebar.radio("Navegación", ["Ventas", "Inventario", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
-# --- 3. MÓDULO DE VENTAS ---
+st.sidebar.markdown("---")
+if st.sidebar.button("🚪 Cerrar Sesión"):
+    st.session_state.auth = False
+    st.session_state.role = None
+    st.rerun()
+
+# --- 4. MÓDULO DE VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
@@ -42,12 +50,10 @@ if menu == "Ventas":
         
         col1, col2 = st.columns(2)
         with col1:
-            if item['foto_path']: st.image(item['foto_path'], width=300)
-            st.write(f"**Descripción:** {item.get('descripcion', 'N/A')}")
+            if item.get('foto_path'): st.image(item['foto_path'], width=300)
         
         with col2:
             st.subheader(item['nombre'])
-            # EL EQUIPO PUEDE CAMBIAR EL PRECIO AQUÍ
             p_venta = st.number_input("Precio de Venta ($)", value=float(item['precio_pub']))
             cant = st.number_input("Cantidad", 1, int(item['stock']))
             
@@ -59,49 +65,85 @@ if menu == "Ventas":
                     "producto": item['nombre'],
                     "cantidad": cant,
                     "precio_total": p_venta * cant,
-                    "ganancia": ganancia if role == "admin" else 0 # Solo admin trackea ganancia real
+                    "ganancia": ganancia if role == "admin" else 0
                 }).execute()
-                st.success("Venta realizada correctamente")
+                st.success("Venta realizada")
                 st.rerun()
 
-# --- 4. MÓDULO DE INVENTARIO ---
+# --- 5. MÓDULO DE INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario Completo")
     
-    tabs = ["Existencias"]
+    tabs_list = ["Existencias"]
     if role == "admin":
-        tabs.insert(0, "Añadir Producto")
+        tabs_list.insert(0, "Añadir Producto")
     
-    selected_tabs = st.tabs(tabs)
+    selected_tabs = st.tabs(tabs_list)
     
+    # Pestaña Añadir (Solo Admin)
     if role == "admin":
         with selected_tabs[0]:
-            # ... (tu código de formulario de registro se queda igual) ...
-            st.info("Asegúrate de llenar todos los campos")
+            with st.form("registro_nuevo", clear_on_submit=True):
+                c1, c2 = st.columns(2)
+                cod = c1.text_input("Código")
+                nom = c2.text_input("Nombre")
+                inv = c1.number_input("Precio Inversión", min_value=0.0)
+                pub = c2.number_input("Precio al Público", min_value=0.0)
+                stk = st.number_input("Stock Inicial", min_value=0)
+                desc = st.text_area("Descripción")
+                foto = st.camera_input("Foto")
+                
+                if st.form_submit_button("Registrar"):
+                    url = ""
+                    if foto:
+                        fname = f"{cod}.jpg"
+                        supabase.storage.from_("fotos").upload(fname, foto.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
+                        url = supabase.storage.from_("fotos").get_public_url(fname)
+                    
+                    supabase.table("productos").insert({
+                        "codigo": cod, "nombre": nom, "descripcion": desc,
+                        "precio_inv": inv, "precio_pub": pub, "stock": stk, "foto_path": url
+                    }).execute()
+                    st.success("Producto registrado")
 
-    idx_existencias = 1 if role == "admin" else 0
-    with selected_tabs[idx_existencias]:
+    # Pestaña Existencias (Admin edita, Equipo solo ve)
+    idx_ex = 1 if role == "admin" else 0
+    with selected_tabs[idx_ex]:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
             
-            # --- CORRECCIÓN DE KEYERROR ---
-            # Solo mostramos las columnas que REALMENTE existen en tu Supabase
-            cols_deseadas = ['foto_path', 'codigo', 'nombre', 'descripcion', 'precio_inv', 'precio_pub', 'stock']
-            if role == "equipo":
-                if 'precio_inv' in cols_deseadas: cols_deseadas.remove('precio_inv')
+            # Definir columnas visibles
+            cols = ['id', 'foto_path', 'codigo', 'nombre', 'descripcion', 'precio_pub', 'stock']
+            if role == "admin": cols.insert(4, 'precio_inv')
             
-            # Filtramos para evitar el error si alguna columna no ha sido creada en Supabase
-            cols_finales = [c for c in cols_deseadas if c in df_i.columns]
+            # Limpiar columnas que no existan en el DF para evitar KeyError
+            cols_finales = [c for c in cols if c in df_i.columns]
+
+            st.write("💡 **Admin:** Haz doble clic en una celda para editar y presiona el botón de abajo.")
             
-            st.data_editor(
+            # El editor de datos
+            df_editado = st.data_editor(
                 df_i[cols_finales],
                 column_config={
+                    "id": None, # Ocultar ID pero tenerlo disponible
                     "foto_path": st.column_config.ImageColumn("Imagen"),
-                    "precio_inv": "Costo",
-                    "precio_pub": "Venta"
                 },
                 hide_index=True,
                 use_container_width=True,
-                disabled=True if role == "equipo" else False
+                disabled=False if role == "admin" else True # Solo admin edita
             )
+
+            # Botón para guardar cambios (Solo Admin)
+            if role == "admin":
+                if st.button("💾 Guardar cambios en Inventario"):
+                    for index, row in df_editado.iterrows():
+                        supabase.table("productos").update({
+                            "nombre": row['nombre'],
+                            "descripcion": row.get('descripcion', ''),
+                            "precio_inv": float(row.get('precio_inv', 0)),
+                            "precio_pub": float(row['precio_pub']),
+                            "stock": int(row['stock'])
+                        }).eq("id", row['id']).execute()
+                    st.success("¡Inventario actualizado en la nube!")
+                    st.rerun()

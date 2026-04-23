@@ -6,7 +6,7 @@ from datetime import datetime
 
 # --- CONFIGURACIÓN DE CONEXIÓN ---
 # Es aquí donde borras el texto genérico y pegas tus llaves reales
-SUPABASE_URL = https://gfileauwnaarqvsndlby.supabase.co/rest/v1/
+SUPABASE_URL = https://gfileauwnaarqvsndlby.supabase.co/rest/v1
 SUPABASE_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs
 
 # --- CONFIGURACIÓN ---

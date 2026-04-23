@@ -2,109 +2,57 @@ import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
-from streamlit_zxing import st_zxing # Librería estable
 
-# --- 1. CONFIGURACIÓN DE CONEXIÓN ---
+# --- CONFIGURACIÓN ---
 SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
-
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- 2. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema Duo POS", layout="wide", page_icon="⚖️")
 
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-
-if not st.session_state.authenticated:
-    st.title("🔐 Acceso Duo")
+# --- LOGIN ---
+if "auth" not in st.session_state: st.session_state.auth = False
+if not st.session_state.auth:
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
-    if st.button("Ingresar"):
-        if u == "admin" and p == "admin123":
-            st.session_state.authenticated, st.session_state.role = True, "admin"
-            st.rerun()
-        elif u == "equipo" and p == "venta123":
-            st.session_state.authenticated, st.session_state.role = True, "equipo"
+    if st.button("Entrar"):
+        if (u == "admin" and p == "admin123") or (u == "equipo" and p == "venta123"):
+            st.session_state.auth, st.session_state.role = True, u
             st.rerun()
     st.stop()
 
-role = st.session_state.role
-menu = st.sidebar.radio("Ir a:", ["Ventas", "Inventario", "Reportes"] if role=="admin" else ["Ventas", "Inventario"])
+# --- MENU ---
+menu = st.sidebar.radio("Ir a:", ["Ventas", "Inventario"])
 
-# --- 4. MÓDULO DE VENTAS ---
 if menu == "Ventas":
-    st.header("💰 Punto de Venta")
-    
-    with st.expander("📷 Abrir Escáner de Barras"):
-        # Este escáner es más estable y compatible
-        resultado_scan = st_zxing(key='scanner_venta')
-        barcode_venta = resultado_scan['barcode'] if resultado_scan else None
-    
+    st.header("💰 Ventas")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
-    productos = res.data
-    
-    if productos:
-        df_prod = pd.DataFrame(productos)
-        indice_default = 0
-        if barcode_venta:
-            match = df_prod[df_prod['codigo'] == barcode_venta]
-            if not match.empty:
-                indice_default = int(match.index[0])
-                st.success(f"Detectado: {barcode_venta}")
+    if res.data:
+        df = pd.DataFrame(res.data)
+        prod_sel = st.selectbox("Producto", df['nombre'])
+        data = df[df['nombre'] == prod_sel].iloc[0]
+        if data['foto_path']: st.image(data['foto_path'], width=300)
+        
+        cant = st.number_input("Cantidad", 1, int(data['stock']))
+        if st.button("Vender"):
+            # Actualizar
+            supabase.table("productos").update({"stock": int(data['stock']-cant)}).eq("id", data['id']).execute()
+            st.success("¡Venta realizada!")
+            st.rerun()
 
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            opcion_prod = st.selectbox("Producto", df_prod['nombre'], index=indice_default)
-            prod_data = df_prod[df_prod['nombre'] == opcion_prod].iloc[0]
-            if prod_data['foto_path']: st.image(prod_data['foto_path'], width=300)
-
-        with col2:
-            st.subheader(prod_data['nombre'])
-            precio_final = st.number_input("Precio ($)", value=float(prod_data['precio_pub']))
-            cant = st.number_input("Cantidad", min_value=1, max_value=int(prod_data['stock']), step=1)
-            if st.button("Confirmar Venta"):
-                ganancia = (precio_final - prod_data['precio_inv']) * cant
-                supabase.table("productos").update({"stock": int(prod_data['stock'] - cant)}).eq("id", prod_data['id']).execute()
-                supabase.table("ventas").insert({"fecha": datetime.now().strftime("%Y-%m-%d %H:%M"), "producto": prod_data['nombre'], "cantidad": int(cant), "precio_total": float(precio_final * cant), "ganancia": float(ganancia)}).execute()
-                st.success("Venta Exitosa")
-                st.rerun()
-
-# --- 5. MÓDULO DE INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
-    t1, t2 = st.tabs(["Registrar Nuevo", "Existencias"])
-    
-    with t1:
-        with st.expander("📷 Escanear Código Nuevo"):
-            resultado_nuevo = st_zxing(key='scanner_nuevo')
-            barcode_nuevo = resultado_nuevo['barcode'] if resultado_nuevo else ""
-        
-        with st.form("registro_nube", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            cod = c1.text_input("Código / SKU", value=barcode_nuevo)
-            nom = c2.text_input("Nombre del Producto")
-            inv = c1.number_input("Costo Inversión", min_value=0.0) if role == "admin" else 0.0
-            pub = c2.number_input("Precio Venta", min_value=0.0)
-            stk = st.number_input("Cantidad Inicial", min_value=0, step=1)
-            foto = st.camera_input("Capturar Foto")
-            
-            if st.form_submit_button("Guardar"):
-                try:
-                    url_foto = ""
-                    if foto:
-                        nombre_img = f"{cod}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
-                        supabase.storage.from_("fotos").upload(nombre_img, foto.getvalue(), {"content-type": "image/jpeg"})
-                        url_foto = supabase.storage.from_("fotos").get_public_url(nombre_img)
-                    
-                    supabase.table("productos").insert({"codigo": cod, "nombre": nom, "stock": stk, "precio_inv": inv, "precio_pub": pub, "foto_path": url_foto}).execute()
-                    st.success("✅ Guardado en la nube")
-                except Exception as e: st.error(f"Error: {e}")
-
-    with t2:
-        res = supabase.table("productos").select("*").execute()
-        if res.data:
-            df_inv = pd.DataFrame(res.data)
-            st.data_editor(df_inv[['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub']], 
-                           column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, 
-                           hide_index=True, use_container_width=True)
+    with st.form("nuevo"):
+        cod = st.text_input("Código")
+        nom = st.text_input("Nombre")
+        stk = st.number_input("Stock", 0)
+        pub = st.number_input("Precio", 0.0)
+        foto = st.camera_input("Foto")
+        if st.form_submit_button("Guardar"):
+            url = ""
+            if foto:
+                fname = f"{cod}.jpg"
+                supabase.storage.from_("fotos").upload(fname, foto.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
+                url = supabase.storage.from_("fotos").get_public_url(fname)
+            supabase.table("productos").insert({"codigo":cod, "nombre":nom, "stock":stk, "precio_pub":pub, "precio_inv":0, "foto_path":url}).execute()
+            st.success("Guardado")

@@ -17,14 +17,14 @@ if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
 if not st.session_state.authenticated:
-    st.title("🔐 Acceso al Sistema Duo")
+    st.title("🔐 Acceso al Sistema TumultoFlow")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Ingresar"):
-        if u == "admin" and p == "admin123":
+        if u == "admin" and p == "admin1":
             st.session_state.authenticated, st.session_state.role = True, "admin"
             st.rerun()
-        elif u == "equipo" and p == "venta123":
+        elif u == "equipo" and p == "equipo1":
             st.session_state.authenticated, st.session_state.role = True, "equipo"
             st.rerun()
         else:

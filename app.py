@@ -8,7 +8,7 @@ SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.set_page_config(page_title="Sistema Duo POS", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="TumultoFlow", layout="wide", page_icon="⚖️")
 
 # --- 2. SISTEMA DE ACCESO ---
 if "auth" not in st.session_state:
@@ -19,10 +19,10 @@ if not st.session_state.auth:
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Ingresar"):
-        if u == "admin" and p == "admin123":
+        if u == "admin" and p == "admin1":
             st.session_state.auth, st.session_state.role = True, "admin"
             st.rerun()
-        elif u == "equipo" and p == "venta123":
+        elif u == "equipo" and p == "equipo1":
             st.session_state.auth, st.session_state.role = True, "equipo"
             st.rerun()
     st.stop()

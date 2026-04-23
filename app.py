@@ -106,32 +106,40 @@ elif menu == "Inventario":
                     }).execute()
                     st.success("Producto registrado")
 
-   # Pestaña Existencias (Admin edita, Equipo solo ve)
+  # Pestaña Existencias (Admin edita, Equipo solo ve)
     idx_ex = 1 if role == "admin" else 0
     with selected_tabs[idx_ex]:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
             
-            # Forzamos el orden de las columnas para que la descripción sea visible
-            columnas_ordenadas = ['id', 'foto_path', 'codigo', 'nombre', 'descripcion', 'precio_pub', 'stock']
-            if role == "admin":
-                columnas_ordenadas.insert(4, 'precio_inv')
+            # --- NUEVO ORDEN DE COLUMNAS ---
+            # Movimos 'stock' y 'precio_pub' (Venta) antes de 'descripcion'
+            columnas_ordenadas = ['id', 'foto_path', 'codigo', 'nombre', 'stock', 'precio_pub']
             
-            # Filtro de seguridad: solo columnas que existen en el dataframe
+            # Si es admin, insertamos el precio de inversión (Costo) antes de la descripción también
+            if role == "admin":
+                columnas_ordenadas.append('precio_inv')
+            
+            # Dejamos la descripción al final para que no estorbe la vista rápida de números
+            columnas_ordenadas.append('descripcion')
+            
+            # Filtro de seguridad: solo columnas que existen en el dataframe real
             cols_finales = [c for c in columnas_ordenadas if c in df_i.columns]
 
             st.info("💡 Haz doble clic en cualquier celda para editar (solo Admin).")
             
-            # Mostramos el editor
+            # Mostramos el editor con el nuevo orden
             df_editado = st.data_editor(
                 df_i[cols_finales],
                 column_config={
-                    "id": None, # Mantenemos el ID oculto pero funcional
+                    "id": None, 
                     "foto_path": st.column_config.ImageColumn("Imagen"),
-                    "descripcion": st.column_config.TextColumn("Descripción", width="large"),
-                    "precio_pub": "Venta ($)",
-                    "precio_inv": "Costo ($)"
+                    "nombre": st.column_config.TextColumn("Producto", width="medium"),
+                    "stock": st.column_config.NumberColumn("Stock", format="%d"),
+                    "precio_pub": st.column_config.NumberColumn("Venta ($)", format="$%.2f"),
+                    "precio_inv": st.column_config.NumberColumn("Costo ($)", format="$%.2f"),
+                    "descripcion": st.column_config.TextColumn("Descripción", width="large")
                 },
                 hide_index=True,
                 use_container_width=True,
@@ -142,17 +150,15 @@ elif menu == "Inventario":
             if role == "admin":
                 if st.button("💾 Guardar cambios en Inventario"):
                     for index, row in df_editado.iterrows():
-                        # Preparar datos para actualizar
                         datos_update = {
                             "nombre": row['nombre'],
                             "precio_pub": float(row['precio_pub']),
                             "stock": int(row['stock'])
                         }
-                        # Solo incluir descripción y costo si las columnas existen
                         if 'descripcion' in row: datos_update["descripcion"] = row['descripcion']
                         if 'precio_inv' in row: datos_update["precio_inv"] = float(row['precio_inv'])
                         
                         supabase.table("productos").update(datos_update).eq("id", row['id']).execute()
                     
-                    st.success("¡Cambios guardados con éxito!")
+                    st.success("¡Inventario actualizado!")
                     st.rerun()

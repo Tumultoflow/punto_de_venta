@@ -4,11 +4,9 @@ from supabase import create_client, Client
 from datetime import datetime
 
 # --- 1. CONFIGURACIÓN DE CONEXIÓN ---
-# Sustituye con tus credenciales de Supabase
 SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 
-# Inicializar cliente de Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # --- 2. CONFIGURACIÓN DE PÁGINA ---
@@ -33,7 +31,6 @@ if not st.session_state.authenticated:
             st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 4. NAVEGACIÓN ---
 role = st.session_state.role
 st.sidebar.title(f"Sesión: {role.upper()}")
 opciones = ["Ventas", "Inventario"]
@@ -42,11 +39,9 @@ if role == "admin":
 
 menu = st.sidebar.radio("Ir a:", opciones)
 
-# --- 5. MÓDULO DE VENTAS ---
+# --- 4. MÓDULO DE VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
-    
-    # Obtener productos con stock de Supabase
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
     productos = res.data
     
@@ -60,26 +55,24 @@ if menu == "Ventas":
             if prod_data['foto_path']:
                 st.image(prod_data['foto_path'], width=350)
             else:
-                st.info("Sin imagen")
+                st.info("Sin imagen disponible")
 
         with col2:
             st.subheader(prod_data['nombre'])
             st.write(f"**Código:** {prod_data['codigo']}")
-            st.write(f"**Stock:** {prod_data['stock']}")
+            st.write(f"**Stock actual:** {prod_data['stock']}")
             
-            precio_final = st.number_input("Precio de Venta Actual ($)", value=float(prod_data['precio_pub']))
-            cant = st.number_input("Cantidad a vender", min_value=1, max_value=int(prod_data['stock']), step=1)
+            precio_final = st.number_input("Precio de Venta ($)", value=float(prod_data['precio_pub']))
+            cant = st.number_input("Cantidad", min_value=1, max_value=int(prod_data['stock']), step=1)
             
             if st.button("Confirmar Venta"):
-                # Cálculos
-                ganancia_u = precio_final - prod_data['precio_inv']
-                ganancia_total = ganancia_u * cant
+                ganancia_total = (precio_final - prod_data['precio_inv']) * cant
                 nuevo_stock = int(prod_data['stock'] - cant)
                 
-                # Actualizar Stock
+                # Actualizar stock
                 supabase.table("productos").update({"stock": nuevo_stock}).eq("id", prod_data['id']).execute()
                 
-                # Registrar Venta
+                # Registrar venta
                 venta = {
                     "fecha": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "producto": prod_data['nombre'],
@@ -88,17 +81,16 @@ if menu == "Ventas":
                     "ganancia": float(ganancia_total)
                 }
                 supabase.table("ventas").insert(venta).execute()
-                
-                st.success("✅ Venta registrada y stock actualizado")
+                st.success(f"✅ Venta registrada: {prod_data['nombre']} x{cant}")
                 st.balloons()
                 st.rerun()
     else:
-        st.warning("No hay productos disponibles en el inventario.")
+        st.warning("No hay productos con existencias.")
 
-# --- 6. MÓDULO DE INVENTARIO ---
+# --- 5. MÓDULO DE INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Mercancía")
-    t1, t2 = st.tabs(["Registrar/Actualizar", "Existencias"])
+    t1, t2 = st.tabs(["Registrar Nuevo", "Existencias Visuales"])
     
     with t1:
         st.subheader("Alta de Producto")
@@ -106,62 +98,78 @@ elif menu == "Inventario":
             c1, c2 = st.columns(2)
             cod = c1.text_input("Código / SKU")
             nom = c2.text_input("Nombre del Producto")
-            inv = c1.number_input("Precio de Inversión (Costo)", min_value=0.0) if role == "admin" else 0.0
-            pub = c2.number_input("Precio de Venta Sugerido", min_value=0.0)
+            inv = c1.number_input("Precio Inversión (Costo)", min_value=0.0) if role == "admin" else 0.0
+            pub = c2.number_input("Precio Venta Público", min_value=0.0)
             stk = st.number_input("Cantidad Inicial", min_value=0, step=1)
             foto = st.camera_input("Capturar Foto")
             
             if st.form_submit_button("Guardar en Nube"):
-                try:
-                    url_foto = ""
-                    if foto:
-                        nombre_img = f"{cod}.jpg"
-                        # Subir a Storage
-                        supabase.storage.from_("fotos").upload(
-                            path=nombre_img,
-                            file=foto.getvalue(),
-                            file_options={"content-type": "image/jpeg", "x-upsert": "true"}
-                        )
-                        url_foto = supabase.storage.from_("fotos").get_public_url(nombre_img)
-                    
-                    # Insertar en tabla
-                    nuevo_p = {
-                        "codigo": cod, "nombre": nom, "stock": stk,
-                        "precio_inv": inv, "precio_pub": pub, "foto_path": url_foto
-                    }
-                    supabase.table("productos").insert(nuevo_p).execute()
-                    st.success("✅ Producto guardado permanentemente")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+                if not cod or not nom:
+                    st.error("Código y Nombre son obligatorios")
+                else:
+                    try:
+                        url_foto = ""
+                        if foto:
+                            # Nombre único para evitar conflictos
+                            nombre_img = f"{cod}_{datetime.now().strftime('%Y%m%d%H%M%S')}.jpg"
+                            supabase.storage.from_("fotos").upload(
+                                path=nombre_img,
+                                file=foto.getvalue(),
+                                file_options={"content-type": "image/jpeg", "x-upsert": "true"}
+                            )
+                            url_foto = supabase.storage.from_("fotos").get_public_url(nombre_img)
+                        
+                        nuevo_p = {
+                            "codigo": cod, "nombre": nom, "stock": stk,
+                            "precio_inv": inv, "precio_pub": pub, "foto_path": url_foto
+                        }
+                        supabase.table("productos").insert(nuevo_p).execute()
+                        st.success("✅ Producto y foto guardados correctamente")
+                    except Exception as e:
+                        st.error(f"Error técnico: {e}")
 
     with t2:
         res = supabase.table("productos").select("*").execute()
         if res.data:
             df_inv = pd.DataFrame(res.data)
-            columnas = ['id', 'codigo', 'nombre', 'stock', 'precio_pub']
-            if role == "admin": columnas.append('precio_inv')
-            st.dataframe(df_inv[columnas], use_container_width=True)
+            columnas_visibles = ['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub']
+            if role == "admin":
+                columnas_visibles.append('precio_inv')
+
+            # Tabla con imágenes renderizadas
+            st.data_editor(
+                df_inv[columnas_visibles],
+                column_config={
+                    "foto_path": st.column_config.ImageColumn("Imagen", help="Vista previa del producto"),
+                    "precio_pub": st.column_config.NumberColumn("Precio Venta", format="$%.2f"),
+                    "precio_inv": st.column_config.NumberColumn("Costo Inv.", format="$%.2f"),
+                },
+                hide_index=True,
+                use_container_width=True,
+                disabled=True
+            )
             
             if role == "admin":
+                st.write("---")
                 id_del = st.number_input("ID para eliminar", min_value=1, step=1)
-                if st.button("🗑️ Eliminar Producto"):
+                if st.button("🗑️ Eliminar Producto Definitivamente"):
                     supabase.table("productos").delete().eq("id", id_del).execute()
                     st.rerun()
 
-# --- 7. MÓDULO DE REPORTES ---
+# --- 6. MÓDULO DE REPORTES ---
 elif menu == "Reportes":
-    st.header("📊 Reportes de Venta y Utilidad")
+    st.header("📊 Resumen Económico (Solo Admin)")
     res_v = supabase.table("ventas").select("*").execute()
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        col_m1, col_m2 = st.columns(2)
-        col_m1.metric("Ventas Totales ($)", f"${df_v['precio_total'].sum():,.2f}")
-        col_m2.metric("Ganancia Neta ($)", f"${df_v['ganancia'].sum():,.2f}")
+        c1, c2 = st.columns(2)
+        c1.metric("Ingresos Totales", f"${df_v['precio_total'].sum():,.2f}")
+        c2.metric("Utilidad Neta", f"${df_v['ganancia'].sum():,.2f}")
         
-        st.write("### Historial de Movimientos")
+        st.subheader("Historial Detallado")
         st.dataframe(df_v.sort_values(by="fecha", ascending=False), use_container_width=True)
     else:
-        st.info("No hay historial de ventas.")
+        st.info("No hay registros de ventas todavía.")
 
 if st.sidebar.button("Cerrar Sesión"):
     st.session_state.authenticated = False

@@ -1,36 +1,22 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+from supabase import create_client, Client
 import os
 from datetime import datetime
 
-# --- CONFIGURACIÓN DE CONEXIÓN ---
-# Es aquí donde borras el texto genérico y pegas tus llaves reales
-SUPABASE_URL = https://gfileauwnaarqvsndlby.supabase.co/rest/v1
-SUPABASE_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs
+# --- CONFIGURACIÓN DE CONEXIÓN CORREGIDA ---
+# Nota: He añadido las comillas y corregido la URL
+SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 
-# --- CONFIGURACIÓN ---
+# Conectar a Supabase
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Sistema Duo - Gestión Total", layout="wide", page_icon="📦")
 
 if not os.path.exists("fotos"):
     os.makedirs("fotos")
-
-def conectar():
-    return sqlite3.connect('negocio_pro.db', check_same_thread=False)
-
-def inicializar_db():
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS productos 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, codigo TEXT, nombre TEXT, 
-                       stock INTEGER, precio_inv REAL, precio_pub REAL, foto_path TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS ventas 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, fecha TEXT, producto TEXT, 
-                       cantidad INTEGER, precio_total_cobrado REAL, ganancia_neta REAL)''')
-    conn.commit()
-    conn.close()
-
-inicializar_db()
 
 # --- LOGIN ---
 if "authenticated" not in st.session_state:
@@ -55,20 +41,22 @@ if not st.session_state.authenticated:
 role = st.session_state.role
 st.sidebar.title(f"Usuario: {role.upper()}")
 
-# Ahora AMBOS roles ven Ventas e Inventario
 opciones = ["Ventas", "Inventario"]
 if role == "admin":
-    opciones.append("Reportes") # Solo tú ves las ganancias totales
+    opciones.append("Reportes")
 
 menu = st.sidebar.radio("Ir a:", opciones)
 
 # --- MÓDULO VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
-    conn = conectar()
-    df_prod = pd.read_sql_query("SELECT * FROM productos WHERE stock > 0", conn)
     
-    if not df_prod.empty:
+    # Traer productos desde Supabase
+    res = supabase.table("productos").select("*").gt("stock", 0).execute()
+    productos = res.data
+    
+    if productos:
+        df_prod = pd.DataFrame(productos)
         col1, col2 = st.columns([1, 1])
         with col1:
             opcion_prod = st.selectbox("Producto", df_prod['nombre'])
@@ -83,79 +71,79 @@ if menu == "Ventas":
             
             if st.button("Confirmar Venta"):
                 ganancia_total = (precio_final - prod_data['precio_inv']) * cant
-                cursor = conn.cursor()
-                cursor.execute("UPDATE productos SET stock = stock - ? WHERE id = ?", (cant, prod_data['id']))
+                # 1. Actualizar Stock en Supabase
+                nuevo_stock = int(prod_data['stock'] - cant)
+                supabase.table("productos").update({"stock": nuevo_stock}).eq("id", prod_data['id']).execute()
+                
+                # 2. Registrar Venta en Supabase
                 fecha_v = datetime.now().strftime("%Y-%m-%d %H:%M")
-                cursor.execute("INSERT INTO ventas (fecha, producto, cantidad, precio_total_cobrado, ganancia_neta) VALUES (?,?,?,?,?)",
-                               (fecha_v, prod_data['nombre'], cant, precio_final * cant, ganancia_total))
-                conn.commit()
-                st.success("Venta registrada")
+                venta_data = {
+                    "fecha": fecha_v,
+                    "producto": prod_data['nombre'],
+                    "cantidad": int(cant),
+                    "precio_total": float(precio_final * cant),
+                    "ganancia": float(ganancia_total)
+                }
+                supabase.table("ventas").insert(venta_data).execute()
+                
+                st.success("✅ Venta registrada en la nube")
                 st.rerun()
-    conn.close()
+    else:
+        st.warning("No hay productos con stock disponible.")
 
-# --- MÓDULO INVENTARIO (AMBOS ACCEDEN) ---
+# --- MÓDULO INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Mercancía")
-    t1, t2 = st.tabs(["Registrar Nuevo / Compras", "Lista de Existencias"])
+    t1, t2 = st.tabs(["Registrar Nuevo", "Lista de Existencias"])
     
     with t1:
-        st.subheader("Dar de alta producto")
         with st.form("form_registro"):
             c1, c2 = st.columns(2)
             cod = c1.text_input("Código / SKU")
             nom = c2.text_input("Nombre del Producto")
-            
-            # Si es Admin ve precio de inversión, si es Equipo ponemos 0 por defecto o un campo oculto
-            if role == "admin":
-                inv = c1.number_input("Precio Inversión (Costo)", min_value=0.0)
-            else:
-                inv = 0.0 # El equipo no registra el costo, o puedes dejar que lo pongan si confías en ellos
-            
+            inv = c1.number_input("Precio Inversión", min_value=0.0) if role == "admin" else 0.0
             pub = c2.number_input("Precio Público Sugerido", min_value=0.0)
-            stk = st.number_input("Cantidad que ingresa", min_value=0, step=1)
-            foto = st.camera_input("Foto de la mercancía")
+            stk = st.number_input("Cantidad", min_value=0, step=1)
+            foto = st.camera_input("Foto")
             
-            if st.form_submit_button("Guardar en Sistema"):
-                path = f"fotos/{cod}.jpg" if foto else ""
+            if st.form_submit_button("Guardar en Nube"):
+                path_foto = f"fotos/{cod}.jpg" if foto else ""
                 if foto:
-                    with open(path, "wb") as f: f.write(foto.getbuffer())
-                conn = conectar()
-                cursor = conn.cursor()
-                cursor.execute("INSERT INTO productos (codigo, nombre, stock, precio_inv, precio_pub, foto_path) VALUES (?,?,?,?,?,?)",
-                               (cod, nom, stk, inv, pub, path))
-                conn.commit()
-                conn.close()
-                st.success("¡Producto añadido al inventario!")
+                    with open(path_foto, "wb") as f: f.write(foto.getbuffer())
+                
+                nuevo_prod = {
+                    "codigo": cod, "nombre": nom, "stock": stk, 
+                    "precio_inv": inv, "precio_pub": pub, "foto_path": path_foto
+                }
+                supabase.table("productos").insert(nuevo_prod).execute()
+                st.success("¡Guardado exitosamente en Supabase!")
 
     with t2:
-        conn = conectar()
-        # Seleccionamos columnas según el rol para proteger tus datos
-        if role == "admin":
-            query = "SELECT id, codigo, nombre, stock, precio_inv, precio_pub FROM productos"
-        else:
-            query = "SELECT id, codigo, nombre, stock, precio_pub FROM productos"
+        res = supabase.table("productos").select("*").execute()
+        if res.data:
+            df_inv = pd.DataFrame(res.data)
+            # Ocultar columnas sensibles si no es admin
+            cols_mostrar = ['id', 'codigo', 'nombre', 'stock', 'precio_pub']
+            if role == "admin": cols_mostrar.append('precio_inv')
             
-        inventario_df = pd.read_sql_query(query, conn)
-        st.dataframe(inventario_df, use_container_width=True)
-        
-        if role == "admin":
-            id_del = st.number_input("ID para eliminar", min_value=1, step=1)
-            if st.button("Eliminar permanentemente"):
-                cursor = conn.cursor(); cursor.execute("DELETE FROM productos WHERE id = ?", (id_del,))
-                conn.commit(); st.rerun()
-        conn.close()
+            st.dataframe(df_inv[cols_mostrar], use_container_width=True)
+            
+            if role == "admin":
+                id_del = st.number_input("ID para eliminar", min_value=1, step=1)
+                if st.button("Eliminar"):
+                    supabase.table("productos").delete().eq("id", id_del).execute()
+                    st.rerun()
 
-# --- MÓDULO REPORTES (SOLO ADMIN) ---
+# --- MÓDULO REPORTES ---
 elif menu == "Reportes":
     st.header("📊 Resumen Económico")
-    conn = conectar()
-    df_ventas = pd.read_sql_query("SELECT * FROM ventas", conn)
-    conn.close()
-    if not df_ventas.empty:
-        st.metric("Ganancia Total Acumulada", f"${df_ventas['ganancia_neta'].sum():,.2f}")
-        st.dataframe(df_ventas)
+    res = supabase.table("ventas").select("*").execute()
+    if res.data:
+        df_v = pd.DataFrame(res.data)
+        st.metric("Ganancia Total Real", f"${df_v['ganancia'].sum():,.2f}")
+        st.dataframe(df_v)
     else:
-        st.info("Sin ventas aún.")
+        st.info("Aún no hay ventas.")
 
 if st.sidebar.button("Salir"):
     st.session_state.authenticated = False

@@ -8,7 +8,7 @@ SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.set_page_config(page_title="Duo POS", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 if "auth" not in st.session_state: st.session_state.auth = False
 
@@ -17,10 +17,10 @@ if not st.session_state.auth:
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        if u == "admin" and p == "admin123":
+        if u == "admin" and p == "admin1":
             st.session_state.auth, st.session_state.role = True, "admin"
             st.rerun()
-        elif u == "equipo" and p == "venta123":
+        elif u == "equipo" and p == "equipo1":
             st.session_state.auth, st.session_state.role = True, "equipo"
             st.rerun()
     st.stop()
@@ -60,7 +60,7 @@ if menu == "Ventas":
                 st.success("¡Venta Exitosa!")
                 st.rerun()
 
-# --- INVENTARIO CON EDICIÓN DE IMÁGENES ---
+# --- INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     t1, t2 = st.tabs(["Registro", "Existencias"])
@@ -92,55 +92,61 @@ elif menu == "Inventario":
             df_i = pd.DataFrame(res_i.data)
             cols = ['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'fecha_ingreso', 'descripcion']
             if role == "admin": cols.insert(5, 'precio_inv')
-            
-            # Mostrar tabla
-            st.subheader("Lista de Existencias")
-            st.data_editor(
-                df_i[[c for c in cols if c in df_i.columns]],
-                column_config={"foto_path": st.column_config.ImageColumn("Imagen")},
-                hide_index=True, use_container_width=True, disabled=True if role == "equipo" else False
-            )
+            st.data_editor(df_i[[c for c in cols if c in df_i.columns]], column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, hide_index=True, use_container_width=True, disabled=True if role == "equipo" else False)
 
-            # --- PANEL DE EDICIÓN DE IMAGEN (Solo Admin) ---
             if role == "admin":
                 st.markdown("---")
                 st.subheader("🖼️ Cambiar Imagen de Producto")
-                prod_edit = st.selectbox("Selecciona el producto a actualizar foto", df_i['nombre'])
-                nueva_foto = st.file_uploader("Subir nueva imagen", type=["jpg", "jpeg", "png"])
-                
-                if st.button("Actualizar Imagen"):
+                prod_edit = st.selectbox("Selecciona producto para foto", df_i['nombre'], key="edit_img_sel")
+                nueva_foto = st.file_uploader("Subir nueva imagen", type=["jpg", "png", "jpeg"])
+                if st.button("Confirmar Cambio de Imagen"):
                     if nueva_foto:
                         item_edit = df_i[df_i['nombre'] == prod_edit].iloc[0]
-                        fname = f"{item_edit['codigo']}.jpg"
-                        # Subir y reemplazar en Storage
+                        fname = f"{item_edit['codigo']}_{datetime.now().strftime('%M%S')}.jpg"
                         supabase.storage.from_("fotos").upload(fname, nueva_foto.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
                         new_url = supabase.storage.from_("fotos").get_public_url(fname)
-                        # Actualizar URL en la tabla
                         supabase.table("productos").update({"foto_path": new_url}).eq("id", item_edit['id']).execute()
-                        st.success(f"Imagen de {prod_edit} actualizada correctamente.")
+                        st.success("Imagen actualizada.")
                         st.rerun()
-                    else:
-                        st.warning("Por favor, selecciona una imagen primero.")
 
-# --- REPORTES Y ANULACIÓN ---
+# --- REPORTES FILTRADOS ---
 elif menu == "Reportes":
-    st.header("📊 Historial y Anulaciones")
+    st.header("📊 Reportes de Ventas")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
+    
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        st.subheader("Lista de Ventas")
-        st.dataframe(df_v, use_container_width=True)
+        df_v['fecha_solo'] = pd.to_datetime(df_v['fecha_venta']).dt.date
+        
+        # Filtros
+        col_f1, col_f2 = st.columns(2)
+        tipo_reporte = col_f1.selectbox("Tipo de Reporte", ["Completo", "Por Día Específico"])
+        
+        if tipo_reporte == "Por Día Específico":
+            fecha_busqueda = col_f2.date_input("Selecciona Fecha", datetime.now())
+            df_v = df_v[df_v['fecha_solo'] == fecha_busqueda]
+        
+        st.subheader(f"Ventas: {tipo_reporte}")
+        st.dataframe(df_v.drop(columns=['fecha_solo']), use_container_width=True)
+        
+        # Métricas rápidas
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total Ventas", f"${df_v['precio_total'].sum():,.2f}")
+        c2.metric("Ganancia Total", f"${df_v['ganancia'].sum():,.2f}")
+        c3.metric("Unidades Vendidas", f"{df_v['cantidad'].sum()}")
+
         st.markdown("---")
         st.subheader("🛑 Panel de Anulación")
-        opciones = df_v['id'].astype(str) + " - " + df_v['producto']
-        venta_a_anular = st.selectbox("Selecciona la venta para ANULAR", opciones)
-        if st.button("Confirmar Anulación Definitiva"):
-            id_v = int(venta_a_anular.split(" - ")[0])
-            v_data = df_v[df_v['id'] == id_v].iloc[0]
-            p_res = supabase.table("productos").select("stock").eq("nombre", v_data['producto']).execute()
-            if p_res.data:
-                nuevo_stk = int(p_res.data[0]['stock']) + int(v_data['cantidad'])
-                supabase.table("productos").update({"stock": nuevo_stk}).eq("nombre", v_data['producto']).execute()
-                supabase.table("ventas").delete().eq("id", id_v).execute()
-                st.warning("Venta anulada y stock devuelto.")
-                st.rerun()
+        if not df_v.empty:
+            opciones = df_v['id'].astype(str) + " - " + df_v['producto']
+            venta_a_anular = st.selectbox("Venta a ANULAR", opciones)
+            if st.button("Anular Venta Seleccionada"):
+                id_v = int(venta_a_anular.split(" - ")[0])
+                v_data = df_v[df_v['id'] == id_v].iloc[0]
+                p_res = supabase.table("productos").select("stock").eq("nombre", v_data['producto']).execute()
+                if p_res.data:
+                    nuevo_stk = int(p_res.data[0]['stock']) + int(v_data['cantidad'])
+                    supabase.table("productos").update({"stock": nuevo_stk}).eq("nombre", v_data['producto']).execute()
+                    supabase.table("ventas").delete().eq("id", id_v).execute()
+                    st.warning("Venta anulada.")
+                    st.rerun()

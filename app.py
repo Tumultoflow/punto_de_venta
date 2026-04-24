@@ -86,39 +86,45 @@ elif menu == "Inventario":
                     }).execute()
                     st.success("Registrado")
     
-    with t2:
+   with t2:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_original = pd.DataFrame(res_i.data)
-            # Definimos las columnas que queremos ver/editar
-            cols_vista = ['id', 'foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'fecha_ingreso', 'descripcion']
-            if role == "admin": cols_vista.insert(5, 'precio_inv')
             
-            # Solo mostramos columnas que existan en el DF
+            # --- DEFINICIÓN DE COLUMNAS SEGÚN EL ROL ---
+            # El equipo SI debe ver la fecha de ingreso, pero NO el precio de inversión
+            if role == "admin":
+                cols_vista = ['id', 'foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'precio_inv', 'fecha_ingreso', 'descripcion']
+            else:
+                # Columnas para el equipo (incluimos fecha_ingreso)
+                cols_vista = ['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'fecha_ingreso', 'descripcion']
+            
+            # Filtro de seguridad para asegurar que las columnas existan en la base de datos
             cols_disponibles = [c for c in cols_vista if c in df_original.columns]
             
             st.subheader("Lista de Existencias")
-            st.info("💡 Edita las celdas y presiona el botón de abajo para guardar.")
+            if role == "admin":
+                st.info("💡 Edita las celdas y presiona el botón de abajo para guardar.")
             
             # EL EDITOR DE DATOS
             df_editado = st.data_editor(
                 df_original[cols_disponibles],
                 column_config={
-                    "id": None, # Ocultamos el ID pero lo conservamos para el update
+                    "id": None, # Solo se usa internamente por el admin
                     "foto_path": st.column_config.ImageColumn("Imagen"),
+                    "fecha_ingreso": st.column_config.DateColumn("Fecha Ingreso", format="DD/MM/YYYY"),
                     "descripcion": st.column_config.TextColumn("Descripción", width="large")
                 },
                 hide_index=True,
                 use_container_width=True,
-                disabled=False if role == "admin" else True,
+                disabled=False if role == "admin" else True, # Bloqueado para el equipo
                 key="editor_existencias"
             )
 
-            # BOTÓN PARA GUARDAR CAMBIOS (Solo Admin)
+            # --- BOTÓN PARA GUARDAR CAMBIOS (Solo Admin) ---
             if role == "admin":
                 if st.button("💾 Guardar Cambios en Tabla"):
                     for index, row in df_editado.iterrows():
-                        # Preparamos el diccionario de actualización
                         actualizacion = {
                             "codigo": row['codigo'],
                             "nombre": row['nombre'],
@@ -129,10 +135,9 @@ elif menu == "Inventario":
                         if 'precio_inv' in row:
                             actualizacion["precio_inv"] = float(row['precio_inv'])
                         
-                        # Enviamos a Supabase usando el ID de la fila
                         supabase.table("productos").update(actualizacion).eq("id", row['id']).execute()
                     
-                    st.success("¡Cambios guardados en la base de datos!")
+                    st.success("¡Inventario actualizado correctamente!")
                     st.rerun()
 
             # PANEL DE IMAGEN (Sigue funcionando igual)

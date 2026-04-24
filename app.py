@@ -34,7 +34,7 @@ if st.sidebar.button("🚪 CERRAR SESIÓN"):
 st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegación", ["Ventas", "Inventario", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
-# --- VENTAS ---
+# --- 4. VENTAS ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
@@ -60,7 +60,7 @@ if menu == "Ventas":
                 st.success("¡Venta Exitosa!")
                 st.rerun()
 
-# --- INVENTARIO ---
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     t1, t2 = st.tabs(["Registro", "Existencias"])
@@ -86,67 +86,50 @@ elif menu == "Inventario":
                     }).execute()
                     st.success("Registrado")
     
-   with t2:
+    with t2:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_original = pd.DataFrame(res_i.data)
-            
-            # --- DEFINICIÓN DE COLUMNAS SEGÚN EL ROL ---
-            # El equipo SI debe ver la fecha de ingreso, pero NO el precio de inversión
+            # Orden: Foto, Código, Nombre, Stock, Venta, (Costo solo admin), Ingreso, Descripción
             if role == "admin":
                 cols_vista = ['id', 'foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'precio_inv', 'fecha_ingreso', 'descripcion']
             else:
-                # Columnas para el equipo (incluimos fecha_ingreso)
                 cols_vista = ['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'fecha_ingreso', 'descripcion']
             
-            # Filtro de seguridad para asegurar que las columnas existan en la base de datos
             cols_disponibles = [c for c in cols_vista if c in df_original.columns]
             
             st.subheader("Lista de Existencias")
-            if role == "admin":
-                st.info("💡 Edita las celdas y presiona el botón de abajo para guardar.")
-            
-            # EL EDITOR DE DATOS
             df_editado = st.data_editor(
                 df_original[cols_disponibles],
                 column_config={
-                    "id": None, # Solo se usa internamente por el admin
+                    "id": None,
                     "foto_path": st.column_config.ImageColumn("Imagen"),
-                    "fecha_ingreso": st.column_config.DateColumn("Fecha Ingreso", format="DD/MM/YYYY"),
                     "descripcion": st.column_config.TextColumn("Descripción", width="large")
                 },
                 hide_index=True,
                 use_container_width=True,
-                disabled=False if role == "admin" else True, # Bloqueado para el equipo
+                disabled=False if role == "admin" else True,
                 key="editor_existencias"
             )
 
-            # --- BOTÓN PARA GUARDAR CAMBIOS (Solo Admin) ---
             if role == "admin":
                 if st.button("💾 Guardar Cambios en Tabla"):
                     for index, row in df_editado.iterrows():
                         actualizacion = {
-                            "codigo": row['codigo'],
-                            "nombre": row['nombre'],
-                            "stock": int(row['stock']),
-                            "precio_pub": float(row['precio_pub']),
+                            "codigo": row['codigo'], "nombre": row['nombre'],
+                            "stock": int(row['stock']), "precio_pub": float(row['precio_pub']),
                             "descripcion": row['descripcion']
                         }
-                        if 'precio_inv' in row:
-                            actualizacion["precio_inv"] = float(row['precio_inv'])
-                        
+                        if 'precio_inv' in row: actualizacion["precio_inv"] = float(row['precio_inv'])
                         supabase.table("productos").update(actualizacion).eq("id", row['id']).execute()
-                    
-                    st.success("¡Inventario actualizado correctamente!")
+                    st.success("¡Cambios guardados!")
                     st.rerun()
 
-            # PANEL DE IMAGEN (Sigue funcionando igual)
-            if role == "admin":
                 st.markdown("---")
-                st.subheader("🖼️ Cambiar Imagen de Producto")
+                st.subheader("🖼️ Cambiar Imagen")
                 prod_edit = st.selectbox("Producto para foto", df_original['nombre'])
                 nueva_foto = st.file_uploader("Nueva imagen", type=["jpg", "png", "jpeg"])
-                if st.button("Confirmar Nueva Imagen"):
+                if st.button("Confirmar Imagen"):
                     if nueva_foto:
                         item = df_original[df_original['nombre'] == prod_edit].iloc[0]
                         fname = f"{item['codigo']}_{datetime.now().strftime('%H%M%S')}.jpg"
@@ -156,11 +139,34 @@ elif menu == "Inventario":
                         st.success("Imagen actualizada.")
                         st.rerun()
 
-# --- REPORTES ---
+# --- 6. REPORTES ---
 elif menu == "Reportes":
-    # (Se mantiene el código de reportes y filtrado por fecha anterior)
-    st.header("📊 Reportes")
+    st.header("📊 Reportes de Ventas")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        st.dataframe(df_v, use_container_width=True)
+        df_v['fecha_solo'] = pd.to_datetime(df_v['fecha_venta']).dt.date
+        col_f1, col_f2 = st.columns(2)
+        tipo = col_f1.selectbox("Filtro", ["Completo", "Por Día"])
+        if tipo == "Por Día":
+            f_busq = col_f2.date_input("Fecha", datetime.now())
+            df_v = df_v[df_v['fecha_solo'] == f_busq]
+        
+        st.dataframe(df_v.drop(columns=['fecha_solo']), use_container_width=True)
+        
+        # Anulación
+        st.markdown("---")
+        st.subheader("🛑 Anulación")
+        if not df_v.empty:
+            opc = df_v['id'].astype(str) + " - " + df_v['producto']
+            v_anular = st.selectbox("Venta a borrar", opc)
+            if st.button("Anular"):
+                id_v = int(v_anular.split(" - ")[0])
+                v_sel = df_v[df_v['id'] == id_v].iloc[0]
+                p_res = supabase.table("productos").select("stock").eq("nombre", v_sel['producto']).execute()
+                if p_res.data:
+                    n_stk = int(p_res.data[0]['stock']) + int(v_sel['cantidad'])
+                    supabase.table("productos").update({"stock": n_stk}).eq("nombre", v_sel['producto']).execute()
+                    supabase.table("ventas").delete().eq("id", id_v).execute()
+                    st.warning("Venta anulada.")
+                    st.rerun()

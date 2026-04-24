@@ -8,7 +8,7 @@ SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.set_page_config(page_title="Duo POS", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 if "auth" not in st.session_state: st.session_state.auth = False
 
@@ -17,10 +17,10 @@ if not st.session_state.auth:
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        if u == "admin" and p == "admin123":
+        if u == "admin" and p == "admin1":
             st.session_state.auth, st.session_state.role = True, "admin"
             st.rerun()
-        elif u == "equipo" and p == "venta123":
+        elif u == "equipo" and p == "equipo1":
             st.session_state.auth, st.session_state.role = True, "equipo"
             st.rerun()
     st.stop()
@@ -87,8 +87,9 @@ elif menu == "Inventario":
                         "stock": stk, "descripcion": desc, "fecha_ingreso": str(f_ing), "foto_path": url
                     }).execute()
                     st.success("Registrado")
-    idx = 1 if role == "admin" else 0
-    with tabs[idx] if 'tabs' in locals() else t2:
+    
+    idx_tab = 1 if role == "admin" else 0
+    with t2:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
@@ -96,7 +97,7 @@ elif menu == "Inventario":
             if role == "admin": cols.insert(5, 'precio_inv')
             st.data_editor(df_i[[c for c in cols if c in df_i.columns]], column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, hide_index=True, use_container_width=True, disabled=True if role == "equipo" else False)
 
-# --- 6. REPORTES Y ANULACIÓN (Solo Admin) ---
+# --- 6. REPORTES Y ANULACIÓN (Corregido) ---
 elif menu == "Reportes":
     st.header("📊 Historial y Anulaciones")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
@@ -108,23 +109,27 @@ elif menu == "Reportes":
         
         st.markdown("---")
         st.subheader("🛑 Panel de Anulación")
-        venta_a_anular = st.selectbox("Selecciona la venta para ANULAR (Devolverá stock)", df_v['id'].astype(str) + " - " + df_v['producto'])
-        id_venta = int(venta_a_anular.split(" - ")[0])
+        # Selector de venta
+        opciones = df_v['id'].astype(str) + " - " + df_v['producto']
+        venta_a_anular = st.selectbox("Selecciona la venta para ANULAR", opciones)
         
         if st.button("Confirmar Anulación Definitiva"):
-            # Obtener datos de la venta para devolver el stock
+            id_venta = int(venta_a_anular.split(" - ")[0])
             v_data = df_v[df_v['id'] == id_venta].iloc[0]
             prod_nombre = v_data['producto']
-            cant_dev = v_data['cantidad']
+            cant_dev = int(v_data['cantidad']) # Forzamos entero
             
-            # 1. Buscar producto para saber stock actual
+            # 1. Buscar producto
             p_res = supabase.table("productos").select("stock").eq("nombre", prod_nombre).execute()
             if p_res.data:
-                stock_actual = p_res.data[0]['stock']
-                # 2. Devolver stock
-                supabase.table("productos").update({"stock": stock_actual + cant_dev}).eq("nombre", prod_nombre).execute()
+                stock_actual = int(p_res.data[0]['stock']) # Forzamos entero
+                nuevo_stock = stock_actual + cant_dev
+                
+                # 2. Devolver stock (convertido a int nativo de Python para evitar el TypeError)
+                supabase.table("productos").update({"stock": int(nuevo_stock)}).eq("nombre", prod_nombre).execute()
+                
                 # 3. Eliminar registro de venta
                 supabase.table("ventas").delete().eq("id", id_venta).execute()
                 
-                st.warning(f"Venta #{id_venta} anulada. Se devolvieron {cant_dev} unidades a {prod_nombre}.")
+                st.warning(f"Venta #{id_venta} anulada. Stock actualizado.")
                 st.rerun()

@@ -10,15 +10,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="Duo POS", layout="wide", page_icon="⚖️")
 
-# --- 2. GESTIÓN DE SESIÓN ---
-if "auth" not in st.session_state:
-    st.session_state.auth = False
-
-# Función para limpiar la sesión
-def logout():
-    st.session_state.auth = False
-    st.session_state.role = None
-    st.rerun()
+if "auth" not in st.session_state: st.session_state.auth = False
 
 if not st.session_state.auth:
     st.title("🔐 Acceso Duo")
@@ -33,16 +25,16 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# --- 3. BARRA LATERAL (Botón de Cerrar Sesión Arriba) ---
 role = st.session_state.role
-st.sidebar.error(f"👤 Sesión: {role.upper()}") # Color para que resalte
+st.sidebar.error(f"👤 Sesión: {role.upper()}")
 if st.sidebar.button("🚪 CERRAR SESIÓN"):
-    logout()
+    st.session_state.auth = False
+    st.rerun()
 
 st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegación", ["Ventas", "Inventario", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
-# --- 4. MÓDULO DE VENTAS ---
+# --- 4. VENTAS ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
@@ -65,31 +57,25 @@ if menu == "Ventas":
                 ganancia = (precio_v - item['precio_inv']) * cant
                 supabase.table("productos").update({"stock": int(item['stock']-cant)}).eq("id", item['id']).execute()
                 supabase.table("ventas").insert({
-                    "fecha_venta": fecha_v,
-                    "producto": item['nombre'],
-                    "cantidad": cant,
-                    "precio_total": precio_v * cant,
-                    "ganancia": ganancia if role == "admin" else 0
+                    "fecha_venta": fecha_v, "producto": item['nombre'], "cantidad": cant,
+                    "precio_total": precio_v * cant, "ganancia": ganancia if role == "admin" else 0
                 }).execute()
                 st.success("¡Venta Exitosa!")
                 st.rerun()
 
-# --- 5. MÓDULO DE INVENTARIO ---
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     t1, t2 = st.tabs(["Registro", "Existencias"])
-    
     if role == "admin":
         with t1:
             with st.form("f_reg", clear_on_submit=True):
-                cod = st.text_input("Código")
-                nom = st.text_input("Nombre")
-                inv = st.number_input("Inversión", 0.0)
-                pub = st.number_input("Público", 0.0)
-                stk = st.number_input("Stock", 0)
-                f_ing = st.date_input("Fecha de Ingreso", datetime.now())
-                desc = st.text_area("Descripción")
-                foto = st.camera_input("Foto")
+                c1, c2 = st.columns(2)
+                cod = c1.text_input("Código")
+                nom = c2.text_input("Nombre")
+                inv = c1.number_input("Inversión", 0.0); pub = c2.number_input("Público", 0.0)
+                stk = c1.number_input("Stock", 0); f_ing = st.date_input("Fecha", datetime.now())
+                desc = st.text_area("Descripción"); foto = st.camera_input("Foto")
                 if st.form_submit_button("Guardar"):
                     url = ""
                     if foto:
@@ -101,22 +87,44 @@ elif menu == "Inventario":
                         "stock": stk, "descripcion": desc, "fecha_ingreso": str(f_ing), "foto_path": url
                     }).execute()
                     st.success("Registrado")
-
-    with t2:
+    idx = 1 if role == "admin" else 0
+    with tabs[idx] if 'tabs' in locals() else t2:
         res_i = supabase.table("productos").select("*").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
             cols = ['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'fecha_ingreso', 'descripcion']
             if role == "admin": cols.insert(5, 'precio_inv')
-            st.data_editor(
-                df_i[[c for c in cols if c in df_i.columns]],
-                column_config={"foto_path": st.column_config.ImageColumn("Imagen")},
-                hide_index=True, use_container_width=True, disabled=True if role == "equipo" else False
-            )
+            st.data_editor(df_i[[c for c in cols if c in df_i.columns]], column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, hide_index=True, use_container_width=True, disabled=True if role == "equipo" else False)
 
-# --- 6. REPORTES ---
+# --- 6. REPORTES Y ANULACIÓN (Solo Admin) ---
 elif menu == "Reportes":
-    st.header("📊 Historial de Ventas")
+    st.header("📊 Historial y Anulaciones")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
+    
     if res_v.data:
-        st.dataframe(pd.DataFrame(res_v.data), use_container_width=True)
+        df_v = pd.DataFrame(res_v.data)
+        st.subheader("Lista de Ventas")
+        st.dataframe(df_v, use_container_width=True)
+        
+        st.markdown("---")
+        st.subheader("🛑 Panel de Anulación")
+        venta_a_anular = st.selectbox("Selecciona la venta para ANULAR (Devolverá stock)", df_v['id'].astype(str) + " - " + df_v['producto'])
+        id_venta = int(venta_a_anular.split(" - ")[0])
+        
+        if st.button("Confirmar Anulación Definitiva"):
+            # Obtener datos de la venta para devolver el stock
+            v_data = df_v[df_v['id'] == id_venta].iloc[0]
+            prod_nombre = v_data['producto']
+            cant_dev = v_data['cantidad']
+            
+            # 1. Buscar producto para saber stock actual
+            p_res = supabase.table("productos").select("stock").eq("nombre", prod_nombre).execute()
+            if p_res.data:
+                stock_actual = p_res.data[0]['stock']
+                # 2. Devolver stock
+                supabase.table("productos").update({"stock": stock_actual + cant_dev}).eq("nombre", prod_nombre).execute()
+                # 3. Eliminar registro de venta
+                supabase.table("ventas").delete().eq("id", id_venta).execute()
+                
+                st.warning(f"Venta #{id_venta} anulada. Se devolvieron {cant_dev} unidades a {prod_nombre}.")
+                st.rerun()

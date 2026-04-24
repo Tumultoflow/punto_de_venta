@@ -105,7 +105,6 @@ elif menu == "Inventario":
             if 'fecha_ingreso' in df_i.columns:
                 df_i['fecha_ingreso'] = df_i['fecha_ingreso'].fillna("Sin fecha")
             
-            # Orden de columnas
             if role == "admin":
                 cols = ['id', 'foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'precio_inv', 'fecha_ingreso', 'descripcion']
             else:
@@ -125,50 +124,46 @@ elif menu == "Inventario":
             )
 
             if role == "admin":
-                col_btn1, col_btn2 = st.columns([1, 4])
-                with col_btn1:
-                    if st.button("💾 Guardar Datos"):
-                        for _, row in df_editado.iterrows():
-                            upd = {"codigo": row['codigo'], "nombre": row['nombre'], "stock": int(row['stock']), "precio_pub": float(row['precio_pub']), "descripcion": row['descripcion'], "fecha_ingreso": str(row['fecha_ingreso'])}
-                            if 'precio_inv' in row: upd["precio_inv"] = float(row['precio_inv'])
-                            supabase.table("productos").update(upd).eq("id", row['id']).execute()
-                        st.success("Sincronizado")
-                        st.rerun()
+                if st.button("💾 Guardar Cambios de Texto/Stock"):
+                    for _, row in df_editado.iterrows():
+                        upd = {"codigo": row['codigo'], "nombre": row['nombre'], "stock": int(row['stock']), "precio_pub": float(row['precio_pub']), "descripcion": row['descripcion'], "fecha_ingreso": str(row['fecha_ingreso'])}
+                        if 'precio_inv' in row: upd["precio_inv"] = float(row['precio_inv'])
+                        supabase.table("productos").update(upd).eq("id", row['id']).execute()
+                    st.success("Sincronizado")
+                    st.rerun()
 
                 st.markdown("---")
-                st.subheader("🖼️ Cambiar Imagen de un Producto")
-                st.info("Selecciona el producto y sube la nueva imagen para reemplazar la anterior.")
                 
-                # Panel de edición de imagen
-                c_img1, c_img2 = st.columns([1, 1])
-                with c_img1:
-                    prod_nom = st.selectbox("Producto a modificar", df_i['nombre'], key="sel_prod_img")
-                with c_img2:
-                    nueva_foto = st.file_uploader("Subir nueva foto", type=["jpg", "png", "jpeg"], key="upload_new_img")
+                # SECCIÓN DE CAMBIO DE IMAGEN Y BORRADO
+                col_img, col_del = st.columns(2)
                 
-                if st.button("🚀 Actualizar Foto Ahora"):
-                    if nueva_foto:
-                        item_sel = df_i[df_i['nombre'] == prod_nom].iloc[0]
-                        # Nombre de archivo único para evitar caché del navegador
-                        nuevo_nombre = f"{item_sel['codigo']}_{datetime.now().strftime('%H%M%S')}.jpg"
-                        
-                        # Subir a Supabase Storage
-                        supabase.storage.from_("fotos").upload(
-                            nuevo_nombre, 
-                            nueva_foto.getvalue(), 
-                            {"content-type": "image/jpeg", "x-upsert": "true"}
-                        )
-                        
-                        # Obtener URL pública
-                        nueva_url = supabase.storage.from_("fotos").get_public_url(nuevo_nombre)
-                        
-                        # Actualizar en la tabla de base de datos
-                        supabase.table("productos").update({"foto_path": nueva_url}).eq("id", item_sel['id']).execute()
-                        
-                        st.success(f"✅ Imagen de '{prod_nom}' actualizada correctamente.")
-                        st.rerun()
-                    else:
-                        st.warning("Por favor, selecciona una imagen primero.")
+                with col_img:
+                    st.subheader("🖼️ Cambiar Imagen")
+                    p_img = st.selectbox("Producto a modificar foto", df_i['nombre'])
+                    n_img = st.file_uploader("Nueva foto", type=["jpg", "png", "jpeg"])
+                    if st.button("🚀 Actualizar Foto"):
+                        if n_img:
+                            item = df_i[df_i['nombre'] == p_img].iloc[0]
+                            fname = f"{item['codigo']}_{datetime.now().strftime('%H%M%S')}.jpg"
+                            supabase.storage.from_("fotos").upload(fname, n_img.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
+                            new_url = supabase.storage.from_("fotos").get_public_url(fname)
+                            supabase.table("productos").update({"foto_path": new_url}).eq("id", item['id']).execute()
+                            st.success("Imagen actualizada")
+                            st.rerun()
+
+                with col_del:
+                    st.subheader("🗑️ Borrar Producto")
+                    st.warning("Esta acción eliminará el producto permanentemente.")
+                    p_del = st.selectbox("Producto a eliminar", df_i['nombre'])
+                    check_del = st.checkbox(f"Confirmar que deseo borrar '{p_del}'")
+                    if st.button("❌ Eliminar Producto"):
+                        if check_del:
+                            id_borrar = df_i[df_i['nombre'] == p_del].iloc[0]['id']
+                            supabase.table("productos").delete().eq("id", id_borrar).execute()
+                            st.error(f"Producto '{p_del}' eliminado.")
+                            st.rerun()
+                        else:
+                            st.info("Por favor, marca la casilla de confirmación para borrar.")
 
 # --- 6. REPORTES ---
 elif menu == "Reportes":

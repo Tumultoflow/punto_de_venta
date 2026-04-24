@@ -15,7 +15,7 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Acceso TUMULTOFLOW")
+    st.title("🔐 Acceso")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):

@@ -1,11 +1,10 @@
-import stimport streamlit as st
+import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
 import pytz
 
 # --- 1. CONFIGURACIÓN Y CONEXIÓN ---
-# Ajusta tu zona horaria aquí
 ZONA_LOCAL = pytz.timezone('America/Mexico_City')
 
 SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
@@ -50,7 +49,6 @@ if menu == "Ventas":
         prod = st.selectbox("Seleccionar Producto", df['nombre'])
         item = df[df['nombre'] == prod].iloc[0]
         
-        # Procesar string de colores "Rojo:5, Azul:10" -> Diccionario
         variantes = {}
         if item.get('colores'):
             try:
@@ -80,19 +78,16 @@ if menu == "Ventas":
             cant = st.number_input("Cantidad", 1, max_value=max(1, stock_max))
             
             if st.button("Confirmar Venta"):
-                # Actualizar variantes de color
                 nueva_cadena_colores = item['colores']
                 if variantes:
                     variantes[color_sel] -= cant
                     nueva_cadena_colores = ", ".join([f"{k}:{v}" for k, v in variantes.items()])
                 
-                # Actualizar Base de Datos
                 supabase.table("productos").update({
                     "stock": int(item['stock'] - cant),
                     "colores": nueva_cadena_colores
                 }).eq("id", item['id']).execute()
                 
-                # Registrar Venta
                 detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
                 supabase.table("ventas").insert({
                     "fecha_venta": fecha_v, "producto": detalle, "cantidad": cant,
@@ -123,7 +118,6 @@ elif menu == "Inventario":
                 foto = st.camera_input("Foto")
                 
                 if st.form_submit_button("Guardar Producto"):
-                    # Si hay colores, sumamos el stock total de ellos
                     stock_final = stk
                     if col_input:
                         try:
@@ -143,3 +137,87 @@ elif menu == "Inventario":
                     }).execute()
                     st.success("Producto registrado")
                     st.rerun()
+
+    with t2:
+        res_i = supabase.table("productos").select("*").execute()
+        if res_i.data:
+            df_i = pd.DataFrame(res_i.data)
+            if 'fecha_ingreso' in df_i.columns: df_i['fecha_ingreso'] = df_i['fecha_ingreso'].fillna("Sin fecha")
+            if 'colores' in df_i.columns: df_i['colores'] = df_i['colores'].fillna("")
+            
+            if role == "admin":
+                cols = ['id', 'foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'precio_inv', 'fecha_ingreso', 'colores', 'descripcion']
+            else:
+                cols = ['foto_path', 'codigo', 'nombre', 'stock', 'precio_pub', 'fecha_ingreso', 'colores', 'descripcion']
+            
+            st.subheader("Lista de Existencias")
+            df_editado = st.data_editor(
+                df_i[[c for c in cols if c in df_i.columns]],
+                column_config={
+                    "id": None,
+                    "foto_path": st.column_config.ImageColumn("Imagen"),
+                    "colores": st.column_config.TextColumn("Colores (Ej: Rojo:5, Azul:10)")
+                },
+                hide_index=True, use_container_width=True,
+                disabled=True if role == "equipo" else False,
+                key="editor_variantes"
+            )
+
+            if role == "admin":
+                if st.button("💾 Guardar Cambios en Tabla"):
+                    for _, row in df_editado.iterrows():
+                        stk_upd = int(row['stock'])
+                        if row['colores']:
+                            try:
+                                stk_upd = sum([int(p.split(':')[1]) for p in row['colores'].split(',') if ':' in p])
+                            except: pass
+                        
+                        upd = {
+                            "codigo": row['codigo'], "nombre": row['nombre'], "stock": stk_upd,
+                            "precio_pub": float(row['precio_pub']), "descripcion": row['descripcion'],
+                            "fecha_ingreso": str(row['fecha_ingreso']), "colores": row['colores']
+                        }
+                        if 'precio_inv' in row: upd["precio_inv"] = float(row['precio_inv'])
+                        supabase.table("productos").update(upd).eq("id", row['id']).execute()
+                    st.success("Sincronizado")
+                    st.rerun()
+
+                st.markdown("---")
+                c_img, c_del = st.columns(2)
+                with c_img:
+                    st.subheader("🖼️ Cambiar Imagen")
+                    p_img = st.selectbox("Producto a cambiar foto", df_i['nombre'])
+                    n_img = st.file_uploader("Nueva foto", type=["jpg", "png", "jpeg"])
+                    if st.button("Actualizar Foto"):
+                        if n_img:
+                            item = df_i[df_i['nombre'] == p_img].iloc[0]
+                            fname = f"{item['codigo']}_{datetime.now().strftime('%H%M%S')}.jpg"
+                            supabase.storage.from_("fotos").upload(fname, n_img.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
+                            new_url = supabase.storage.from_("fotos").get_public_url(fname)
+                            supabase.table("productos").update({"foto_path": new_url}).eq("id", item['id']).execute()
+                            st.success("Imagen actualizada")
+                            st.rerun()
+                with c_del:
+                    st.subheader("🗑️ Borrar Producto")
+                    p_del = st.selectbox("Producto a borrar", df_i['nombre'])
+                    conf = st.checkbox(f"Confirmar borrado de {p_del}")
+                    if st.button("❌ Eliminar"):
+                        if conf:
+                            id_b = df_i[df_i['nombre'] == p_del].iloc[0]['id']
+                            supabase.table("productos").delete().eq("id", id_b).execute()
+                            st.error("Producto eliminado")
+                            st.rerun()
+
+# --- 6. REPORTES ---
+elif menu == "Reportes":
+    st.header("📊 Reportes")
+    res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
+    if res_v.data:
+        df_v = pd.DataFrame(res_v.data)
+        df_v['fecha_solo'] = pd.to_datetime(df_v['fecha_venta']).dt.date
+        c_f1, c_f2 = st.columns(2)
+        if c_f1.selectbox("Filtro", ["Completo", "Por Día"]) == "Por Día":
+            df_v = df_v[df_v['fecha_solo'] == c_f2.date_input("Día", datetime.now(ZONA_LOCAL))]
+        
+        st.dataframe(df_v.drop(columns=['fecha_solo']), use_container_width=True)
+        st.metric("Ventas Totales", f"${df_v['precio_total'].sum():,.2f}")

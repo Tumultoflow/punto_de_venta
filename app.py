@@ -7,10 +7,12 @@ import pytz
 # --- 1. CONFIGURACIÓN Y CONEXIÓN ---
 ZONA_LOCAL = pytz.timezone('America/Mexico_City')
 
+# Credenciales de Supabase
 SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Configuración de pestaña
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 # --- 2. GESTIÓN DE SESIÓN ---
@@ -30,6 +32,7 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
+# --- 3. BARRA LATERAL ---
 role = st.session_state.role
 st.sidebar.error(f"👤 Sesión: {role.upper()}")
 if st.sidebar.button("🚪 CERRAR SESIÓN"):
@@ -39,7 +42,7 @@ if st.sidebar.button("🚪 CERRAR SESIÓN"):
 st.sidebar.markdown("---")
 menu = st.sidebar.radio("Navegación", ["Ventas", "Inventario", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
-# --- 4. VENTAS (Mantenemos la lógica anterior) ---
+# --- 4. VENTAS ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).order("nombre").execute()
@@ -65,7 +68,7 @@ if menu == "Ventas":
                 if item.get('foto_path'): st.image(item['foto_path'], width=350)
             with col_v2:
                 st.subheader(item['nombre'])
-                vendedor_txt = st.text_input("👤 Nombre del Vendedor", placeholder="Quién atiende")
+                vendedor_txt = st.text_input("👤 Nombre del Vendedor", placeholder="Nombre de quien atiende")
                 metodo_pago = st.selectbox("💳 Método de Pago", ["Efectivo", "Transferencia", "Tarjeta"])
                 
                 variantes = {}
@@ -88,7 +91,7 @@ if menu == "Ventas":
                 
                 if st.button("🚀 Confirmar Venta"):
                     if not vendedor_txt:
-                        st.warning("Escribe el nombre del vendedor.")
+                        st.warning("⚠️ Ingresa el nombre del vendedor.")
                     else:
                         nueva_cadena_colores = item['colores']
                         if variantes:
@@ -96,18 +99,23 @@ if menu == "Ventas":
                             nueva_cadena_colores = ", ".join([f"{k}:{v}" for k, v in variantes.items()])
                         
                         supabase.table("productos").update({"stock": int(item['stock'] - cant), "colores": nueva_cadena_colores}).eq("id", item['id']).execute()
+                        
                         detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
+                        
                         supabase.table("ventas").insert({
                             "fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), 
-                            "producto": detalle, "codigo_prod": str(item['codigo']),
-                            "vendedor": vendedor_txt, "metodo_pago": metodo_pago,
-                            "cantidad": cant, "precio_total": precio_v * cant, 
+                            "producto": detalle, 
+                            "codigo_prod": str(item['codigo']),
+                            "vendedor": vendedor_txt,
+                            "metodo_pago": metodo_pago,
+                            "cantidad": cant, 
+                            "precio_total": precio_v * cant, 
                             "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
                         }).execute()
-                        st.success(f"Venta registrada!")
+                        st.success(f"¡Venta registrada!")
                         st.rerun()
 
-# --- 5. INVENTARIO (CON SELECCIÓN INTELIGENTE) ---
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     
@@ -118,28 +126,30 @@ elif menu == "Inventario":
 
     with t1:
         st.subheader("📋 Lista de Existencias")
-        st.info("💡 Haz clic en la casilla de la izquierda de cualquier producto para seleccionarlo y borrarlo o cambiar su imagen arriba.")
+        st.info("💡 Haz clic en el círculo a la izquierda de un producto para seleccionarlo y habilitar acciones.")
         
         cols_to_show = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'precio_inv', 'colores', 'descripcion'] if role == "admin" else ['foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'colores']
         
-        # TABLA CON SELECCIÓN
         df_editado = st.data_editor(
             df_i[[c for c in cols_to_show if c in df_i.columns]],
             column_config={
                 "id": None, 
                 "foto_path": st.column_config.ImageColumn("Imagen"),
-                "precio_inv": st.column_config.NumberColumn("Inversión ($)", format="$%.2f"),
-                "precio_pub": st.column_config.NumberColumn("Público ($)", format="$%.2f")
+                "precio_inv": st.column_config.NumberColumn("Inv ($)", format="$%.2f"),
+                "precio_pub": st.column_config.NumberColumn("Pub ($)", format="$%.2f")
             },
-            hide_index=False, # Mantenemos el índice para la selección
+            hide_index=False,
             use_container_width=True,
             disabled=True if role == "equipo" else False,
             key="editor_central"
         )
 
-        # Capturar qué fila está seleccionada
-        selected_rows = st.session_state["editor_central"]["selection"]["rows"]
-        
+        # Manejo seguro de la selección para evitar KeyError
+        state = st.session_state.get("editor_central")
+        selected_rows = []
+        if state and "selection" in state:
+            selected_rows = state["selection"].get("rows", [])
+
         if role == "admin":
             if st.button("💾 Guardar cambios de edición rápida"):
                 for idx, row in df_editado.iterrows():
@@ -152,34 +162,30 @@ elif menu == "Inventario":
                 st.success("Cambios guardados.")
                 st.rerun()
 
-            # --- PANEL DINÁMICO SEGÚN SELECCIÓN ---
+            # Panel de acciones si hay una fila seleccionada
             if selected_rows:
                 st.markdown("---")
                 idx_sel = selected_rows[0]
                 item_sel = df_i.iloc[idx_sel]
                 
-                st.subheader(f"🛠️ Acciones para: {item_sel['nombre']} ({item_sel['codigo']})")
-                
+                st.subheader(f"🛠️ Acciones para: {item_sel['nombre']}")
                 c_act1, c_act2 = st.columns(2)
                 
                 with c_act1:
-                    st.write("📷 **Actualizar Imagen**")
-                    n_img = st.file_uploader("Subir nueva foto", type=["jpg", "png"], key="upload_active")
-                    if st.button("🚀 Aplicar Nueva Imagen"):
+                    st.write("📷 **Cambiar Imagen**")
+                    n_img = st.file_uploader("Nueva foto", type=["jpg", "png"], key="up_img")
+                    if st.button("🚀 Actualizar Foto"):
                         if n_img:
                             fname = f"{item_sel['codigo']}_{datetime.now().strftime('%H%M%S')}.jpg"
                             supabase.storage.from_("fotos").upload(fname, n_img.getvalue(), {"content-type":"image/jpeg"})
                             new_url = supabase.storage.from_("fotos").get_public_url(fname)
                             supabase.table("productos").update({"foto_path": new_url}).eq("id", item_sel['id']).execute()
-                            st.success("Imagen actualizada.")
                             st.rerun()
                 
                 with c_act2:
-                    st.write("🗑️ **Eliminar Producto**")
-                    st.warning("Esta acción no se puede deshacer.")
-                    if st.button("❌ Eliminar Permanentemente"):
+                    st.write("🗑️ **Eliminar**")
+                    if st.button("❌ Borrar Producto"):
                         supabase.table("productos").delete().eq("id", item_sel['id']).execute()
-                        st.error("Producto eliminado.")
                         st.rerun()
 
     if role == "admin":
@@ -189,17 +195,17 @@ elif menu == "Inventario":
                 c1, c2 = st.columns(2)
                 cod = c1.text_input("Código")
                 nom = c2.text_input("Nombre")
-                cat = c1.selectbox("Categoría", ["ELECTRÓNICA", "HERRAMIENTAS", "HOGAR", "PAPELERÍA", "BELLEZA Y SALUD", "MODA Y ACCESORIOS", "DEPORTES", "JUGUETES / HOBBY", "MASCOTAS"])
-                inv = c1.number_input("Inversión ($)", 0.0)
-                pub = c2.number_input("Precio Público ($)", 0.0)
-                stk = c1.number_input("Stock Global", 0)
-                col_input = c2.text_input("Colores (Ej: Rojo:5, Azul:10)")
-                desc = st.text_area("Descripción")
-                foto = st.camera_input("Tomar Foto")
+                cat = c1.selectbox("Categoría", ["ELECTRÓNICA", "HERRAMIENTAS", "HOGAR", "PAPELERÍA", "BELLEZA Y SALUD", "MODA Y ACCESORIOS", "DEPORTES", "JUGUETES", "MASCOTAS"])
+                inv = c1.number_input("Costo Inversión", 0.0)
+                pub = c2.number_input("Precio Público", 0.0)
+                stk = c1.number_input("Cantidad inicial", 0)
+                col_input = c2.text_input("Variantes (Ej: Rojo:5, Azul:10)")
+                desc = st.text_area("Descripción corta")
+                foto = st.camera_input("Foto")
                 if st.form_submit_button("Guardar Producto"):
-                    stock_final = stk
+                    stock_f = stk
                     if col_input:
-                        try: stock_final = sum([int(p.split(':')[1]) for p in col_input.split(',') if ':' in p])
+                        try: stock_f = sum([int(p.split(':')[1]) for p in col_input.split(',') if ':' in p])
                         except: pass
                     url = ""
                     if foto:
@@ -208,10 +214,10 @@ elif menu == "Inventario":
                         url = supabase.storage.from_("fotos").get_public_url(fname)
                     supabase.table("productos").insert({
                         "codigo": cod, "nombre": nom, "categoria": cat, "precio_inv": inv, 
-                        "precio_pub": pub, "stock": stock_final, "descripcion": desc, 
+                        "precio_pub": pub, "stock": stock_f, "descripcion": desc, 
                         "foto_path": url, "colores": col_input
                     }).execute()
-                    st.success("Guardado.")
+                    st.success("¡Producto Guardado!")
                     st.rerun()
 
 # --- 6. REPORTES ---
@@ -220,12 +226,12 @@ elif menu == "Reportes":
     res_v = supabase.table("ventas").select("*").order("id", desc=True).execute()
     if res_v.data:
         df_v = pd.DataFrame(res_v.data).fillna("---")
-        cols_reporte = ['id', 'fecha_venta', 'vendedor', 'metodo_pago', 'codigo_prod', 'producto', 'cantidad', 'precio_total', 'ganancia']
-        df_mostrar = df_v[[c for c in cols_reporte if c in df_v.columns]]
-        st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+        cols_rep = ['id', 'fecha_venta', 'vendedor', 'metodo_pago', 'codigo_prod', 'producto', 'cantidad', 'precio_total', 'ganancia']
+        df_m = df_v[[c for c in cols_rep if c in df_v.columns]]
+        st.dataframe(df_m, use_container_width=True, hide_index=True)
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Ingreso Total", f"${df_v['precio_total'].astype(float).sum():,.2f}")
+        c1.metric("Venta Total", f"${df_v['precio_total'].astype(float).sum():,.2f}")
         if 'ganancia' in df_v.columns:
             c2.metric("Ganancia", f"${df_v['ganancia'].astype(float).sum():,.2f}")
-        c3.metric("Productos", int(df_v['cantidad'].astype(float).sum()))
+        c3.metric("Unidades Vendidas", int(df_v['cantidad'].astype(float).sum()))

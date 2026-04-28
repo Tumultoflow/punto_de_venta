@@ -83,10 +83,10 @@ if menu == "Ventas":
                             "cantidad": cant, "precio_total": precio_v * cant, 
                             "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
                         }).execute()
-                        st.success("Venta registrada!")
+                        st.success("¡Venta registrada!")
                         st.rerun()
 
-# --- 5. INVENTARIO (CON SELECTOR DE ACCIONES DIRECTO) ---
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     
@@ -98,39 +98,36 @@ elif menu == "Inventario":
     with t_exist:
         if role == "admin":
             st.subheader("🛠️ Panel de Edición y Borrado")
-            # SELECTOR MAESTRO: Aquí eliges el producto sin fallas
-            opciones_prod = ["-- Seleccionar producto para modificar --"] + df_i['nombre'].tolist()
-            prod_a_gestionar = st.selectbox("🔍 Elige un producto para cambiar foto o eliminar:", opciones_prod)
+            opciones_prod = ["-- Seleccionar producto --"] + df_i['nombre'].tolist()
+            prod_a_gestionar = st.selectbox("🔍 Elige un producto para modificar o eliminar:", opciones_prod)
 
-            if prod_a_gestionar != "-- Seleccionar producto para modificar --":
+            if prod_a_gestionar != "-- Seleccionar producto --":
                 item_sel = df_i[df_i['nombre'] == prod_a_gestionar].iloc[0]
-                
-                st.info(f"📍 Gestionando: **{item_sel['nombre']}** (Código: {item_sel['codigo']})")
+                st.info(f"📍 Gestionando: **{item_sel['nombre']}**")
                 
                 c_act1, c_act2 = st.columns(2)
                 with c_act1:
-                    st.write("📷 **Cambiar Imagen**")
-                    n_img = st.file_uploader("Nueva foto", type=["jpg", "png"], key="up_img")
-                    if st.button("🚀 Actualizar Foto Ahora"):
+                    n_img = st.file_uploader("Actualizar foto", type=["jpg", "png"], key="up_img")
+                    if st.button("🚀 Guardar Nueva Foto"):
                         if n_img:
                             fname = f"{item_sel['codigo']}_{datetime.now().strftime('%H%M%S')}.jpg"
                             supabase.storage.from_("fotos").upload(fname, n_img.getvalue(), {"content-type":"image/jpeg"})
                             new_url = supabase.storage.from_("fotos").get_public_url(fname)
                             supabase.table("productos").update({"foto_path": new_url}).eq("id", item_sel['id']).execute()
-                            st.success("¡Imagen actualizada!")
                             st.rerun()
-                
                 with c_act2:
-                    st.write("🗑️ **Zona de Peligro**")
-                    if st.button("❌ BORRAR PRODUCTO PERMANENTEMENTE"):
+                    if st.button("❌ BORRAR PRODUCTO"):
                         supabase.table("productos").delete().eq("id", item_sel['id']).execute()
-                        st.error("Producto eliminado del sistema.")
                         st.rerun()
                 st.markdown("---")
 
-        # TABLA DE VISUALIZACIÓN
-        st.subheader("📋 Lista General")
-        cols_to_show = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'precio_inv', 'colores', 'descripcion'] if role == "admin" else ['foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'colores']
+        # --- ORDEN DE COLUMNAS ACTUALIZADO ---
+        if role == "admin":
+            # Colores antes de Stock
+            cols_to_show = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'colores', 'stock', 'precio_pub', 'precio_inv', 'descripcion']
+        else:
+            # Colores antes de Stock (Vista Equipo)
+            cols_to_show = ['foto_path', 'codigo', 'nombre', 'categoria', 'colores', 'stock', 'precio_pub']
         
         df_editado = st.data_editor(
             df_i[[c for c in cols_to_show if c in df_i.columns]],
@@ -145,7 +142,7 @@ elif menu == "Inventario":
             disabled=True if role == "equipo" else False
         )
 
-        if role == "admin" and st.button("💾 Guardar cambios rápidos de la tabla"):
+        if role == "admin" and st.button("💾 Guardar cambios de la tabla"):
             for idx, row in df_editado.iterrows():
                 upd_data = {
                     "codigo": row['codigo'], "nombre": row['nombre'], "categoria": row['categoria'], 
@@ -153,7 +150,7 @@ elif menu == "Inventario":
                     "precio_inv": float(row['precio_inv']), "colores": row['colores'], "descripcion": row['descripcion']
                 }
                 supabase.table("productos").update(upd_data).eq("id", row['id']).execute()
-            st.success("Inventario actualizado.")
+            st.success("Cambios guardados.")
             st.rerun()
 
     if role == "admin":
@@ -164,10 +161,10 @@ elif menu == "Inventario":
                 cod = c1.text_input("Código")
                 nom = c2.text_input("Nombre")
                 cat = c1.selectbox("Categoría", ["ELECTRÓNICA", "HERRAMIENTAS", "HOGAR", "PAPELERÍA", "BELLEZA", "MODA", "DEPORTES", "JUGUETES", "MASCOTAS"])
-                inv = c1.number_input("Costo Inversión", 0.0)
+                inv = c1.number_input("Inversión", 0.0)
                 pub = c2.number_input("Precio Público", 0.0)
-                stk = c1.number_input("Stock", 0)
-                col_input = c2.text_input("Variantes (Color:Cant)")
+                stk = c1.number_input("Stock inicial", 0)
+                col_input = c2.text_input("Colores (Ej: Rojo:5, Azul:10)")
                 desc = st.text_area("Descripción")
                 foto = st.camera_input("Foto")
                 if st.form_submit_button("Guardar"):
@@ -177,7 +174,7 @@ elif menu == "Inventario":
                         supabase.storage.from_("fotos").upload(fname, foto.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
                         url = supabase.storage.from_("fotos").get_public_url(fname)
                     supabase.table("productos").insert({"codigo": cod, "nombre": nom, "categoria": cat, "precio_inv": inv, "precio_pub": pub, "stock": stk, "descripcion": desc, "foto_path": url, "colores": col_input}).execute()
-                    st.success("Guardado!")
+                    st.success("¡Producto Guardado!")
                     st.rerun()
 
 # --- 6. REPORTES ---

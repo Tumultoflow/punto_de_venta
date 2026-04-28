@@ -11,7 +11,6 @@ SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Cambio de nombre en la pestaña de la página
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 # --- 2. GESTIÓN DE SESIÓN ---
@@ -19,11 +18,10 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Acceso") # Cambio de título de acceso
+    st.title("🔐 Acceso")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        # Nuevas credenciales solicitadas
         if u == "admin" and p == "admin1":
             st.session_state.auth, st.session_state.role = True, "admin"
             st.rerun()
@@ -76,12 +74,14 @@ if menu == "Ventas":
             with col_v1:
                 if item.get('foto_path'): st.image(item['foto_path'], width=350)
             with col_v2:
+                st.subheader(item['nombre'])
                 color_sel = None
                 stock_max = int(item['stock'])
                 if variantes:
                     color_sel = st.selectbox("🎨 Color", list(variantes.keys()))
                     stock_max = variantes[color_sel]
                 
+                metodo_pago = st.selectbox("💳 Método de Pago", ["Efectivo", "Transferencia", "Tarjeta"])
                 precio_v = st.number_input("Precio ($)", value=float(item['precio_pub']))
                 cant = st.number_input("Cantidad", 1, max_value=max(1, stock_max))
                 
@@ -92,14 +92,21 @@ if menu == "Ventas":
                         nueva_cadena_colores = ", ".join([f"{k}:{v}" for k, v in variantes.items()])
                     
                     supabase.table("productos").update({"stock": int(item['stock'] - cant), "colores": nueva_cadena_colores}).eq("id", item['id']).execute()
+                    
                     detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
+                    
+                    # Inserción con los nuevos campos
                     supabase.table("ventas").insert({
                         "fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), 
-                        "producto": detalle, "cantidad": cant, 
+                        "producto": detalle, 
+                        "codigo_prod": item['codigo'],
+                        "vendedor": role,
+                        "metodo_pago": metodo_pago,
+                        "cantidad": cant, 
                         "precio_total": precio_v * cant, 
                         "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
                     }).execute()
-                    st.success(f"Vendido: {detalle}")
+                    st.success(f"Vendido por {role}: {detalle} vía {metodo_pago}")
                     st.rerun()
 
 # --- 5. INVENTARIO ---
@@ -139,7 +146,6 @@ elif menu == "Inventario":
                     st.rerun()
 
     with t2:
-        # Ordenado por código alfabéticamente
         res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
@@ -218,9 +224,19 @@ elif menu == "Inventario":
 
 # --- 6. REPORTES ---
 elif menu == "Reportes":
-    st.header("📊 Reportes")
+    st.header("📊 Reportes de Ventas")
     res_v = supabase.table("ventas").select("*").order("id", desc=True).execute()
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        st.dataframe(df_v, use_container_width=True)
-        st.metric("Ventas Totales", f"${df_v['precio_total'].sum():,.2f}")
+        
+        # Reordenar columnas para que se vea mejor el reporte
+        cols_reporte = ['id', 'fecha_venta', 'vendedor', 'metodo_pago', 'codigo_prod', 'producto', 'cantidad', 'precio_total', 'ganancia']
+        df_v = df_v[[c for c in cols_reporte if c in df_v.columns]]
+        
+        st.dataframe(df_v, use_container_width=True, hide_index=True)
+        
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Ingreso Total", f"${df_v['precio_total'].sum():,.2f}")
+        if 'ganancia' in df_v.columns:
+            c2.metric("Ganancia Estimada", f"${df_v['ganancia'].sum():,.2f}")
+        c3.metric("Total Productos", int(df_v['cantidad'].sum()))

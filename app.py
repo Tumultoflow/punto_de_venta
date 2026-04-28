@@ -11,6 +11,7 @@ SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
+# Cambio de nombre en la pestaña de la página
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 # --- 2. GESTIÓN DE SESIÓN ---
@@ -18,10 +19,11 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Acceso TUMULTOFLOW")
+    st.title("🔐 Acceso") # Cambio de título de acceso
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
+        # Nuevas credenciales solicitadas
         if u == "admin" and p == "admin1":
             st.session_state.auth, st.session_state.role = True, "admin"
             st.rerun()
@@ -43,7 +45,7 @@ menu = st.sidebar.radio("Navegación", ["Ventas", "Inventario", "Reportes"] if r
 # --- 4. VENTAS ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
-    res = supabase.table("productos").select("*").gt("stock", 0).execute()
+    res = supabase.table("productos").select("*").gt("stock", 0).order("nombre").execute()
     if res.data:
         df_full = pd.DataFrame(res.data)
         col_f1, col_f2 = st.columns(2)
@@ -91,7 +93,12 @@ if menu == "Ventas":
                     
                     supabase.table("productos").update({"stock": int(item['stock'] - cant), "colores": nueva_cadena_colores}).eq("id", item['id']).execute()
                     detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
-                    supabase.table("ventas").insert({"fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), "producto": detalle, "cantidad": cant, "precio_total": precio_v * cant, "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0}).execute()
+                    supabase.table("ventas").insert({
+                        "fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), 
+                        "producto": detalle, "cantidad": cant, 
+                        "precio_total": precio_v * cant, 
+                        "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
+                    }).execute()
                     st.success(f"Vendido: {detalle}")
                     st.rerun()
 
@@ -109,7 +116,7 @@ elif menu == "Inventario":
                 cat = c1.text_input("Categoría", value="General")
                 inv = c2.number_input("Inversión ($)", 0.0)
                 pub = c1.number_input("Precio Público ($)", 0.0)
-                stk = c2.number_input("Stock Global (si no hay colores)", 0)
+                stk = c2.number_input("Stock Global", 0)
                 col_input = st.text_input("Colores (Ej: Rojo:5, Azul:10)")
                 desc = st.text_area("Descripción")
                 foto = st.camera_input("Foto")
@@ -123,12 +130,17 @@ elif menu == "Inventario":
                         fname = f"{cod}.jpg"
                         supabase.storage.from_("fotos").upload(fname, foto.getvalue(), {"content-type":"image/jpeg", "x-upsert":"true"})
                         url = supabase.storage.from_("fotos").get_public_url(fname)
-                    supabase.table("productos").insert({"codigo": cod, "nombre": nom, "categoria": cat, "precio_inv": inv, "precio_pub": pub, "stock": stock_final, "descripcion": desc, "foto_path": url, "colores": col_input}).execute()
+                    supabase.table("productos").insert({
+                        "codigo": cod, "nombre": nom, "categoria": cat, "precio_inv": inv, 
+                        "precio_pub": pub, "stock": stock_final, "descripcion": desc, 
+                        "foto_path": url, "colores": col_input
+                    }).execute()
                     st.success("Guardado con éxito")
                     st.rerun()
 
     with t2:
-        res_i = supabase.table("productos").select("*").execute()
+        # Ordenado por código alfabéticamente
+        res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
             df_i = df_i.fillna("")
@@ -164,8 +176,6 @@ elif menu == "Inventario":
                 st.markdown("---")
 
             st.subheader("📋 Lista de Existencias")
-            # --- CORRECCIÓN DE COLUMNAS ---
-            # Si es admin, incluimos 'precio_inv'
             if role == "admin":
                 cols_to_show = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'precio_inv', 'colores', 'descripcion']
             else:
@@ -192,19 +202,18 @@ elif menu == "Inventario":
                             try: stk_upd = sum([int(p.split(':')[1]) for p in row['colores'].split(',') if ':' in p])
                             except: pass
                         
-                        # Actualización incluyendo el precio de inversión
                         upd_data = {
                             "codigo": row['codigo'], 
                             "nombre": row['nombre'], 
                             "categoria": row['categoria'], 
                             "stock": stk_upd, 
                             "precio_pub": float(row['precio_pub']), 
-                            "precio_inv": float(row['precio_inv']), # <- Guardar precio de inversión
+                            "precio_inv": float(row['precio_inv']),
                             "colores": row['colores'], 
                             "descripcion": row['descripcion']
                         }
                         supabase.table("productos").update(upd_data).eq("id", row['id']).execute()
-                    st.success("Inventario actualizado correctamente")
+                    st.success("Inventario actualizado")
                     st.rerun()
 
 # --- 6. REPORTES ---

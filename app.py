@@ -66,8 +66,7 @@ if menu == "Ventas":
                 if item.get('foto_path'): st.image(item['foto_path'], width=350)
             with col_v2:
                 st.subheader(item['nombre'])
-                
-                vendedor_txt = st.text_input("👤 Nombre del Vendedor", placeholder="Quién atiende...")
+                vendedor_txt = st.text_input("👤 Nombre del Vendedor", placeholder="Nombre de quien atiende")
                 metodo_pago = st.selectbox("💳 Método de Pago", ["Efectivo", "Transferencia", "Tarjeta"])
                 
                 variantes = {}
@@ -90,7 +89,7 @@ if menu == "Ventas":
                 
                 if st.button("🚀 Confirmar Venta"):
                     if not vendedor_txt:
-                        st.warning("Escribe el nombre del vendedor.")
+                        st.warning("⚠️ Ingresa el nombre del vendedor.")
                     else:
                         nueva_cadena_colores = item['colores']
                         if variantes:
@@ -101,18 +100,17 @@ if menu == "Ventas":
                         
                         detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
                         
-                        # INSERCIÓN CON CÓDIGO DE PRODUCTO
                         supabase.table("ventas").insert({
                             "fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), 
                             "producto": detalle, 
-                            "codigo_prod": str(item['codigo']), # Aseguramos que se envíe el código
+                            "codigo_prod": str(item['codigo']),
                             "vendedor": vendedor_txt,
                             "metodo_pago": metodo_pago,
                             "cantidad": cant, 
                             "precio_total": precio_v * cant, 
                             "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
                         }).execute()
-                        st.success(f"Venta registrada: {detalle}")
+                        st.success(f"Venta registrada!")
                         st.rerun()
 
 # --- 5. INVENTARIO ---
@@ -148,7 +146,7 @@ elif menu == "Inventario":
                         "precio_pub": pub, "stock": stock_final, "descripcion": desc, 
                         "foto_path": url, "colores": col_input
                     }).execute()
-                    st.success("Guardado")
+                    st.success("Guardado con éxito")
                     st.rerun()
 
     with t2:
@@ -157,11 +155,11 @@ elif menu == "Inventario":
             df_i = pd.DataFrame(res_i.data).fillna("")
 
             if role == "admin":
-                st.subheader("🛠️ Herramientas")
+                st.subheader("🛠️ Herramientas de Administrador")
                 exp_img = st.expander("🖼️ Cambiar Imagen")
                 with exp_img:
                     p_img = st.selectbox("Producto", df_i['nombre'], key="upd_img")
-                    n_img = st.file_uploader("Foto", type=["jpg", "png"])
+                    n_img = st.file_uploader("Nueva foto", type=["jpg", "png"])
                     if st.button("Guardar Imagen"):
                         if n_img:
                             item = df_i[df_i['nombre'] == p_img].iloc[0]
@@ -169,6 +167,7 @@ elif menu == "Inventario":
                             supabase.storage.from_("fotos").upload(fname, n_img.getvalue(), {"content-type":"image/jpeg"})
                             new_url = supabase.storage.from_("fotos").get_public_url(fname)
                             supabase.table("productos").update({"foto_path": new_url}).eq("id", item['id']).execute()
+                            st.success("Imagen actualizada")
                             st.rerun()
 
                 exp_del = st.expander("🗑️ Eliminar Producto")
@@ -177,15 +176,52 @@ elif menu == "Inventario":
                     if st.button("Eliminar Permanentemente"):
                         id_b = df_i[df_i['nombre'] == p_del].iloc[0]['id']
                         supabase.table("productos").delete().eq("id", id_b).execute()
+                        st.error("Producto borrado")
                         st.rerun()
+                st.markdown("---")
 
-            st.subheader("📋 Existencias")
-            cols = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'precio_inv', 'colores']
-            st.data_editor(
-                df_i[[c for c in cols if c in df_i.columns]],
-                column_config={"id": None, "foto_path": st.column_config.ImageColumn("Imagen")},
-                hide_index=True, use_container_width=True, disabled=True if role=="equipo" else False
+            st.subheader("📋 Lista de Existencias")
+            if role == "admin":
+                cols_to_show = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'precio_inv', 'colores', 'descripcion']
+            else:
+                cols_to_show = ['foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'colores', 'descripcion']
+            
+            # --- TABLA DE EDICIÓN ---
+            df_editado = st.data_editor(
+                df_i[[c for c in cols_to_show if c in df_i.columns]],
+                column_config={
+                    "id": None, 
+                    "foto_path": st.column_config.ImageColumn("Imagen"),
+                    "precio_inv": st.column_config.NumberColumn("Inversión ($)", format="$%.2f"),
+                    "precio_pub": st.column_config.NumberColumn("Público ($)", format="$%.2f")
+                },
+                hide_index=True, use_container_width=True,
+                disabled=True if role == "equipo" else False,
+                key="editor_final"
             )
+
+            # --- BOTÓN DE GUARDADO (Solo para Admin) ---
+            if role == "admin":
+                if st.button("💾 Guardar cambios en la tabla"):
+                    for _, row in df_editado.iterrows():
+                        stk_upd = int(row['stock'])
+                        if row['colores']:
+                            try: stk_upd = sum([int(p.split(':')[1]) for p in row['colores'].split(',') if ':' in p])
+                            except: pass
+                        
+                        upd_data = {
+                            "codigo": row['codigo'], 
+                            "nombre": row['nombre'], 
+                            "categoria": row['categoria'], 
+                            "stock": stk_upd, 
+                            "precio_pub": float(row['precio_pub']), 
+                            "precio_inv": float(row['precio_inv']),
+                            "colores": row['colores'], 
+                            "descripcion": row['descripcion']
+                        }
+                        supabase.table("productos").update(upd_data).eq("id", row['id']).execute()
+                    st.success("¡Cambios guardados correctamente!")
+                    st.rerun()
 
 # --- 6. REPORTES ---
 elif menu == "Reportes":
@@ -193,17 +229,12 @@ elif menu == "Reportes":
     res_v = supabase.table("ventas").select("*").order("id", desc=True).execute()
     if res_v.data:
         df_v = pd.DataFrame(res_v.data).fillna("---")
-        
-        # DEFINICIÓN EXPLÍCITA DE COLUMNAS PARA EL REPORTE
-        columnas_finales = ['id', 'fecha_venta', 'vendedor', 'metodo_pago', 'codigo_prod', 'producto', 'cantidad', 'precio_total', 'ganancia']
-        
-        # Filtramos solo las que existan en la base de datos para evitar errores
-        df_mostrar = df_v[[c for c in columnas_finales if c in df_v.columns]]
-        
+        cols_reporte = ['id', 'fecha_venta', 'vendedor', 'metodo_pago', 'codigo_prod', 'producto', 'cantidad', 'precio_total', 'ganancia']
+        df_mostrar = df_v[[c for c in cols_reporte if c in df_v.columns]]
         st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
         
         c1, c2, c3 = st.columns(3)
-        c1.metric("Venta Total", f"${df_v['precio_total'].astype(float).sum():,.2f}")
+        c1.metric("Ingreso Total", f"${df_v['precio_total'].astype(float).sum():,.2f}")
         if 'ganancia' in df_v.columns:
             c2.metric("Ganancia", f"${df_v['ganancia'].astype(float).sum():,.2f}")
         c3.metric("Productos", int(df_v['cantidad'].astype(float).sum()))

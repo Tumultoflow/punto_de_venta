@@ -75,41 +75,47 @@ if menu == "Ventas":
                 if item.get('foto_path'): st.image(item['foto_path'], width=350)
             with col_v2:
                 st.subheader(item['nombre'])
+                
+                # --- NUEVOS CAMPOS DE TEXTO ---
+                nombre_vendedor = st.text_input("👤 Nombre del Vendedor", placeholder="Ej: Juan Pérez")
+                metodo_pago = st.selectbox("💳 Método de Pago", ["Efectivo", "Transferencia", "Tarjeta"])
+                
                 color_sel = None
                 stock_max = int(item['stock'])
                 if variantes:
                     color_sel = st.selectbox("🎨 Color", list(variantes.keys()))
                     stock_max = variantes[color_sel]
                 
-                metodo_pago = st.selectbox("💳 Método de Pago", ["Efectivo", "Transferencia", "Tarjeta"])
                 precio_v = st.number_input("Precio ($)", value=float(item['precio_pub']))
                 cant = st.number_input("Cantidad", 1, max_value=max(1, stock_max))
                 
                 if st.button("🚀 Confirmar Venta"):
-                    nueva_cadena_colores = item['colores']
-                    if variantes:
-                        variantes[color_sel] -= cant
-                        nueva_cadena_colores = ", ".join([f"{k}:{v}" for k, v in variantes.items()])
-                    
-                    supabase.table("productos").update({"stock": int(item['stock'] - cant), "colores": nueva_cadena_colores}).eq("id", item['id']).execute()
-                    
-                    detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
-                    
-                    # Inserción con los nuevos campos
-                    supabase.table("ventas").insert({
-                        "fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), 
-                        "producto": detalle, 
-                        "codigo_prod": item['codigo'],
-                        "vendedor": role,
-                        "metodo_pago": metodo_pago,
-                        "cantidad": cant, 
-                        "precio_total": precio_v * cant, 
-                        "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
-                    }).execute()
-                    st.success(f"Vendido por {role}: {detalle} vía {metodo_pago}")
-                    st.rerun()
+                    if not nombre_vendedor:
+                        st.warning("⚠️ Por favor, ingresa el nombre del vendedor.")
+                    else:
+                        nueva_cadena_colores = item['colores']
+                        if variantes:
+                            variantes[color_sel] -= cant
+                            nueva_cadena_colores = ", ".join([f"{k}:{v}" for k, v in variantes.items()])
+                        
+                        supabase.table("productos").update({"stock": int(item['stock'] - cant), "colores": nueva_cadena_colores}).eq("id", item['id']).execute()
+                        
+                        detalle = f"{item['nombre']} ({color_sel})" if color_sel else item['nombre']
+                        
+                        supabase.table("ventas").insert({
+                            "fecha_venta": datetime.now(ZONA_LOCAL).strftime("%Y-%m-%d %H:%M:%S"), 
+                            "producto": detalle, 
+                            "codigo_prod": item['codigo'],
+                            "vendedor": nombre_vendedor, # Se guarda el texto ingresado
+                            "metodo_pago": metodo_pago,
+                            "cantidad": cant, 
+                            "precio_total": precio_v * cant, 
+                            "ganancia": (precio_v - item['precio_inv']) * cant if role == "admin" else 0
+                        }).execute()
+                        st.success(f"Venta registrada por: {nombre_vendedor}")
+                        st.rerun()
 
-# --- 5. INVENTARIO ---
+# --- 5. INVENTARIO (SE MANTIENE IGUAL) ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     t1, t2 = st.tabs(["Registro Nuevo", "Existencias"])
@@ -229,7 +235,6 @@ elif menu == "Reportes":
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
         
-        # Reordenar columnas para que se vea mejor el reporte
         cols_reporte = ['id', 'fecha_venta', 'vendedor', 'metodo_pago', 'codigo_prod', 'producto', 'cantidad', 'precio_total', 'ganancia']
         df_v = df_v[[c for c in cols_reporte if c in df_v.columns]]
         

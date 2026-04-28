@@ -18,7 +18,7 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Acceso Duo")
+    st.title("🔐 Acceso TUMULTOFLOW")
     u = st.text_input("Usuario")
     p = st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
@@ -134,7 +134,6 @@ elif menu == "Inventario":
             df_i = df_i.fillna("")
 
             if role == "admin":
-                # --- PANELES DE EDICIÓN MOVIDOS ARRIBA ---
                 st.subheader("🛠️ Herramientas de Administrador")
                 expander_img = st.expander("🖼️ Cambiar Imagen de Producto")
                 with expander_img:
@@ -162,16 +161,24 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", id_b).execute()
                             st.error("Producto borrado")
                             st.rerun()
-                
                 st.markdown("---")
 
-            # --- TABLA DE EXISTENCIAS ---
             st.subheader("📋 Lista de Existencias")
-            cols = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'colores', 'descripcion']
+            # --- CORRECCIÓN DE COLUMNAS ---
+            # Si es admin, incluimos 'precio_inv'
+            if role == "admin":
+                cols_to_show = ['id', 'foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'precio_inv', 'colores', 'descripcion']
+            else:
+                cols_to_show = ['foto_path', 'codigo', 'nombre', 'categoria', 'stock', 'precio_pub', 'colores', 'descripcion']
             
             df_editado = st.data_editor(
-                df_i[[c for c in cols if c in df_i.columns]],
-                column_config={"id": None, "foto_path": st.column_config.ImageColumn("Imagen")},
+                df_i[[c for c in cols_to_show if c in df_i.columns]],
+                column_config={
+                    "id": None, 
+                    "foto_path": st.column_config.ImageColumn("Imagen"),
+                    "precio_inv": st.column_config.NumberColumn("Inversión ($)", format="$%.2f"),
+                    "precio_pub": st.column_config.NumberColumn("Público ($)", format="$%.2f")
+                },
                 hide_index=True, use_container_width=True,
                 disabled=True if role == "equipo" else False,
                 key="editor_existencias_final"
@@ -184,8 +191,20 @@ elif menu == "Inventario":
                         if row['colores']:
                             try: stk_upd = sum([int(p.split(':')[1]) for p in row['colores'].split(',') if ':' in p])
                             except: pass
-                        supabase.table("productos").update({"codigo": row['codigo'], "nombre": row['nombre'], "categoria": row['categoria'], "stock": stk_upd, "precio_pub": float(row['precio_pub']), "colores": row['colores'], "descripcion": row['descripcion']}).eq("id", row['id']).execute()
-                    st.success("Inventario actualizado")
+                        
+                        # Actualización incluyendo el precio de inversión
+                        upd_data = {
+                            "codigo": row['codigo'], 
+                            "nombre": row['nombre'], 
+                            "categoria": row['categoria'], 
+                            "stock": stk_upd, 
+                            "precio_pub": float(row['precio_pub']), 
+                            "precio_inv": float(row['precio_inv']), # <- Guardar precio de inversión
+                            "colores": row['colores'], 
+                            "descripcion": row['descripcion']
+                        }
+                        supabase.table("productos").update(upd_data).eq("id", row['id']).execute()
+                    st.success("Inventario actualizado correctamente")
                     st.rerun()
 
 # --- 6. REPORTES ---

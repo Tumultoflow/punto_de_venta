@@ -13,11 +13,11 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 # --- 2. FUNCIONES DE BASE DE DATOS ---
-def obtener_categorias():
+def obtener_config(tipo):
     try:
-        res = supabase.table("configuracion").select("valor").eq("tipo", "categoria").execute()
-        cats = [r['valor'] for r in res.data]
-        return sorted(cats) if cats else ["GENERAL"]
+        res = supabase.table("configuracion").select("valor").eq("tipo", tipo).execute()
+        items = [r['valor'] for r in res.data]
+        return sorted(items) if items else ["GENERAL"]
     except:
         return ["GENERAL"]
 
@@ -77,18 +77,17 @@ if menu == "Ventas":
                 st.success("Venta guardada")
                 st.rerun()
 
-# --- 5. INVENTARIO (CON FILTRO DE PRIVACIDAD) ---
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
     df_i = pd.DataFrame(res_i.data) if res_i.data else pd.DataFrame()
-    lista_cats = obtener_categorias()
-
-    # Definir las pestañas según el rol
-    tabs = ["📋 Existencias"]
-    if role == "admin":
-        tabs.append("🆕 Nuevo Producto")
     
+    lista_cats = obtener_config("categoria")
+    lista_subs = obtener_config("subcategoria")
+
+    tabs = ["📋 Existencias"]
+    if role == "admin": tabs.append("🆕 Nuevo Producto")
     t_lista, *t_admin = st.tabs(tabs)
 
     with t_lista:
@@ -105,7 +104,7 @@ elif menu == "Inventario":
                     with col1:
                         e_nom = st.text_input("Nombre", value=it['nombre'])
                         e_cat = st.selectbox("Categoría", lista_cats, index=lista_cats.index(it['categoria']) if it['categoria'] in lista_cats else 0)
-                        e_sub = st.text_input("Subcategoría", value=it.get('subcategoria', ''))
+                        e_sub = st.selectbox("Subcategoría", lista_subs, index=lista_subs.index(it['subcategoria']) if it['subcategoria'] in lista_subs else 0)
                         e_col = st.text_input("Colores", value=it.get('colores', ''))
                         if st.button("💾 Guardar Cambios"):
                             seq = it['codigo'].split('-')[-1] if "-" in it['codigo'] else "001"
@@ -128,25 +127,16 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
-        # --- LÓGICA DE PRIVACIDAD PARA EL EQUIPO ---
         columnas_visibles = ["foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_pub", "nombre"]
-        # Si es admin, agregar el costo de inversión al final o en su lugar correspondiente
-        if role == "admin":
-            columnas_visibles.insert(6, "precio_inv")
+        if role == "admin": columnas_visibles.insert(6, "precio_inv")
 
         st.data_editor(
             df_i,
             column_order=tuple(columnas_visibles),
             column_config={
                 "foto_path": st.column_config.ImageColumn("Imagen"),
-                "codigo": "Código",
-                "stock": "Stock",
-                "categoria": "Categoría",
-                "subcategoria": "Subcategoría",
-                "colores": "Colores",
                 "precio_inv": st.column_config.NumberColumn("Costo Inversión", format="$%.2f"),
                 "precio_pub": st.column_config.NumberColumn("Precio Público", format="$%.2f"),
-                "nombre": "Nombre del Producto"
             },
             use_container_width=True,
             hide_index=True
@@ -158,7 +148,7 @@ elif menu == "Inventario":
                 c1, c2 = st.columns(2)
                 n_nom = c1.text_input("Nombre*")
                 n_cat = c2.selectbox("Categoría*", lista_cats)
-                n_sub = c1.text_input("Subcategoría*")
+                n_sub = c1.selectbox("Subcategoría*", lista_subs)
                 n_col = c2.text_input("Colores")
                 n_inv = c1.number_input("Inversión")
                 n_pub = c2.number_input("Público")
@@ -174,28 +164,44 @@ elif menu == "Inventario":
                     }).execute()
                     st.rerun()
 
-# --- 6. CONFIGURACIÓN ---
+# --- 6. CONFIGURACIÓN (CATEGORÍAS Y SUBCATEGORÍAS) ---
 elif menu == "Configuración":
-    st.header("⚙️ Configuración")
-    st.subheader("📁 Categorías")
-    c_nueva = st.text_input("Nueva Categoría").upper()
-    if st.button("➕ Añadir"):
-        if c_nueva:
-            try:
-                supabase.table("configuracion").insert({"tipo": "categoria", "valor": c_nueva}).execute()
-                st.success("Añadida")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Error: {e}")
+    st.header("⚙️ Configuración Maestra")
     
-    st.divider()
-    res_conf = supabase.table("configuracion").select("*").eq("tipo", "categoria").order("valor").execute()
-    if res_conf.data:
-        for c in res_conf.data:
-            col_a, col_b = st.columns([4, 1])
-            col_a.write(c['valor'])
-            if col_b.button("🗑️", key=f"del_cat_{c['id']}"):
+    col_cat, col_sub = st.columns(2)
+    
+    with col_cat:
+        st.subheader("📁 Categorías")
+        c_nueva = st.text_input("Nueva Categoría").upper()
+        if st.button("➕ Añadir Categoría"):
+            if c_nueva:
+                supabase.table("configuracion").insert({"tipo": "categoria", "valor": c_nueva}).execute()
+                st.rerun()
+        
+        st.divider()
+        res_c = supabase.table("configuracion").select("*").eq("tipo", "categoria").order("valor").execute()
+        for c in res_c.data:
+            ca, cb = st.columns([4, 1])
+            ca.write(c['valor'])
+            if cb.button("🗑️", key=f"cat_{c['id']}"):
                 supabase.table("configuracion").delete().eq("id", c['id']).execute()
+                st.rerun()
+
+    with col_sub:
+        st.subheader("📂 Subcategorías")
+        s_nueva = st.text_input("Nueva Subcategoría").upper()
+        if st.button("➕ Añadir Subcategoría"):
+            if s_nueva:
+                supabase.table("configuracion").insert({"tipo": "subcategoria", "valor": s_nueva}).execute()
+                st.rerun()
+        
+        st.divider()
+        res_s = supabase.table("configuracion").select("*").eq("tipo", "subcategoria").order("valor").execute()
+        for s in res_s.data:
+            sa, sb = st.columns([4, 1])
+            sa.write(s['valor'])
+            if sb.button("🗑️", key=f"sub_{s['id']}"):
+                supabase.table("configuracion").delete().eq("id", s['id']).execute()
                 st.rerun()
 
 # --- 7. REPORTES ---

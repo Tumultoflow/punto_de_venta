@@ -36,7 +36,7 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# --- BOTÓN DE CERRAR SESIÓN EN LA BARRA LATERAL ---
+# --- BOTÓN DE CERRAR SESIÓN ---
 with st.sidebar:
     st.markdown(f"**Usuario:** `{st.session_state.role.upper()}`")
     if st.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
@@ -77,14 +77,19 @@ if menu == "Ventas":
                 st.success("Venta guardada")
                 st.rerun()
 
-# --- 5. INVENTARIO ---
+# --- 5. INVENTARIO (CON FILTRO DE PRIVACIDAD) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
     df_i = pd.DataFrame(res_i.data) if res_i.data else pd.DataFrame()
     lista_cats = obtener_categorias()
 
-    t_lista, t_nuevo = st.tabs(["📋 Existencias", "🆕 Nuevo Producto"])
+    # Definir las pestañas según el rol
+    tabs = ["📋 Existencias"]
+    if role == "admin":
+        tabs.append("🆕 Nuevo Producto")
+    
+    t_lista, *t_admin = st.tabs(tabs)
 
     with t_lista:
         if role == "admin" and not df_i.empty:
@@ -123,9 +128,15 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
+        # --- LÓGICA DE PRIVACIDAD PARA EL EQUIPO ---
+        columnas_visibles = ["foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_pub", "nombre"]
+        # Si es admin, agregar el costo de inversión al final o en su lugar correspondiente
+        if role == "admin":
+            columnas_visibles.insert(6, "precio_inv")
+
         st.data_editor(
             df_i,
-            column_order=("foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_inv", "precio_pub", "nombre"),
+            column_order=tuple(columnas_visibles),
             column_config={
                 "foto_path": st.column_config.ImageColumn("Imagen"),
                 "codigo": "Código",
@@ -141,8 +152,8 @@ elif menu == "Inventario":
             hide_index=True
         )
 
-    with t_nuevo:
-        if role == "admin":
+    if role == "admin" and t_admin:
+        with t_admin[0]:
             with st.form("nuevo_p"):
                 c1, c2 = st.columns(2)
                 n_nom = c1.text_input("Nombre*")

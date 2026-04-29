@@ -78,7 +78,7 @@ if menu == "Ventas":
                 st.success("Venta guardada")
                 st.rerun()
 
-# --- 5. INVENTARIO (Nuevo Formato de Código y Orden de Columnas) ---
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -108,7 +108,6 @@ elif menu == "Inventario":
                         e_sub = st.selectbox("Subcategoría", lista_subs, index=lista_subs.index(it['subcategoria']) if it['subcategoria'] in lista_subs else 0)
                         e_col = st.text_input("Colores", value=it.get('colores', ''))
                         if st.button("💾 Guardar Cambios"):
-                            # Al editar, se mantiene el número secuencial pero se actualizan las siglas
                             seq_final = it['codigo'].split('-')[-1]
                             n_cod = f"{e_cat[:3].upper()}-{e_sub[:3].upper()}-{seq_final}"
                             supabase.table("productos").update({
@@ -129,7 +128,6 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
-        # NUEVO ORDEN DE COLUMNAS: Imagen, Código, Nombre...
         columnas_visibles = ["foto_path", "codigo", "nombre", "stock", "categoria", "subcategoria", "colores", "precio_pub"]
         if role == "admin": columnas_visibles.insert(7, "precio_inv")
 
@@ -155,9 +153,13 @@ elif menu == "Inventario":
                 n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Precio Público ($)")
                 n_stk = c1.number_input("Stock Inicial", step=1)
                 if st.form_submit_button("🚀 Registrar"):
-                    # REINICIO DE NUMERACIÓN SOLO POR CATEGORÍA
-                    res_c = supabase.table("productos").select("id", count="exact").eq("categoria", n_cat).execute()
-                    n_seq = str((res_c.count or 0) + 1).zfill(4)
+                    # LÓGICA DE SECUENCIA POR CATEGORÍA
+                    # Contamos cuántos productos existen en la categoría principal seleccionada
+                    res_count = supabase.table("productos").select("id", count="exact").eq("categoria", n_cat).execute()
+                    proxim_numero = (res_count.count or 0) + 1
+                    n_seq = str(proxim_numero).zfill(4)
+                    
+                    # Generamos el código: CAT(3)-SUB(3)-0000
                     n_cod = f"{n_cat[:3].upper()}-{n_sub[:3].upper()}-{n_seq}"
                     
                     supabase.table("productos").insert({

@@ -84,10 +84,14 @@ elif menu == "Inventario":
                         e_nom = st.text_input("Nombre", value=it['nombre'])
                         e_cat = st.selectbox("Categoría", lista_cats, index=lista_cats.index(it['categoria']) if it['categoria'] in lista_cats else 0)
                         e_sub = st.text_input("Subcategoría", value=it.get('subcategoria', ''))
+                        e_col = st.text_input("Colores", value=it.get('colores', ''))
                         if st.button("💾 Guardar Cambios"):
                             seq = it['codigo'].split('-')[-1] if "-" in it['codigo'] else "001"
                             n_cod = f"{e_cat[:3].upper()}-{e_sub[:2].upper()}-{e_nom[:3].upper()}-{seq}"
-                            supabase.table("productos").update({"nombre":e_nom, "categoria":e_cat, "subcategoria":e_sub, "codigo":n_cod}).eq("id", it['id']).execute()
+                            supabase.table("productos").update({
+                                "nombre": e_nom, "categoria": e_cat, 
+                                "subcategoria": e_sub, "colores": e_col, "codigo": n_cod
+                            }).eq("id", it['id']).execute()
                             st.rerun()
                     with col2:
                         nueva_img = st.file_uploader("Actualizar Imagen", type=["jpg", "png"])
@@ -102,21 +106,45 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
-        st.data_editor(df_i, column_config={"foto_path": st.column_config.ImageColumn("Imagen")}, use_container_width=True, hide_index=True)
+        # ORDEN DE COLUMNAS SOLICITADO
+        st.data_editor(
+            df_i,
+            column_order=("foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_inv", "precio_pub", "nombre"),
+            column_config={
+                "foto_path": st.column_config.ImageColumn("Imagen"),
+                "codigo": "Código",
+                "stock": "Stock",
+                "categoria": "Categoría",
+                "subcategoria": "Subcategoría",
+                "colores": "Colores",
+                "precio_inv": st.column_config.NumberColumn("Costo Inversión", format="$%.2f"),
+                "precio_pub": st.column_config.NumberColumn("Precio Público", format="$%.2f"),
+                "nombre": "Nombre del Producto"
+            },
+            use_container_width=True,
+            hide_index=True
+        )
 
     with t_nuevo:
         if role == "admin":
             with st.form("nuevo_p"):
                 c1, c2 = st.columns(2)
-                n_nom, n_cat = c1.text_input("Nombre*"), c2.selectbox("Categoría*", lista_cats)
+                n_nom = c1.text_input("Nombre*")
+                n_cat = c2.selectbox("Categoría*", lista_cats)
                 n_sub = c1.text_input("Subcategoría*")
-                n_inv, n_pub = c2.number_input("Inversión"), c1.number_input("Público")
-                n_stk = c2.number_input("Stock", step=1)
+                n_col = c2.text_input("Colores")
+                n_inv = c1.number_input("Inversión")
+                n_pub = c2.number_input("Público")
+                n_stk = c1.number_input("Stock", step=1)
                 if st.form_submit_button("🚀 Crear"):
                     res_c = supabase.table("productos").select("id", count="exact").eq("categoria", n_cat).eq("subcategoria", n_sub).execute()
                     n_seq = str((res_c.count or 0) + 1).zfill(3)
                     n_cod = f"{n_cat[:3].upper()}-{n_sub[:2].upper()}-{n_nom[:3].upper()}-{n_seq}"
-                    supabase.table("productos").insert({"codigo":n_cod, "nombre":n_nom, "categoria":n_cat, "subcategoria":n_sub, "precio_inv":n_inv, "precio_pub":n_pub, "stock":n_stk}).execute()
+                    supabase.table("productos").insert({
+                        "codigo": n_cod, "nombre": n_nom, "categoria": n_cat, 
+                        "subcategoria": n_sub, "colores": n_col, 
+                        "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk
+                    }).execute()
                     st.rerun()
 
 # --- 6. CONFIGURACIÓN ---
@@ -139,7 +167,7 @@ elif menu == "Configuración":
         for c in res_conf.data:
             col_a, col_b = st.columns([4, 1])
             col_a.write(c['valor'])
-            if col_b.button("🗑️", key=c['id']):
+            if col_b.button("🗑️", key=f"del_cat_{c['id']}"):
                 supabase.table("configuracion").delete().eq("id", c['id']).execute()
                 st.rerun()
 

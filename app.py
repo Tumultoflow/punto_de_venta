@@ -3,7 +3,6 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
 import pytz
-import re
 
 # --- 1. CONFIGURACIÓN Y CONEXIÓN ---
 ZONA_LOCAL = pytz.timezone('America/Mexico_City')
@@ -79,7 +78,7 @@ if menu == "Ventas":
                 st.success("Venta guardada")
                 st.rerun()
 
-# --- 5. INVENTARIO ---
+# --- 5. INVENTARIO (CON EDICIÓN DE CÓDIGOS) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -96,26 +95,28 @@ elif menu == "Inventario":
         if role == "admin" and not df_i.empty:
             st.subheader("🛠️ Gestionar Producto:")
             opciones_p = [f"{r['codigo']} - {r['nombre']}" for r in res_i.data]
-            p_sel_raw = st.selectbox("Selecciona un producto:", ["-- Seleccionar --"] + opciones_p)
+            p_sel_raw = st.selectbox("Selecciona un producto para editar:", ["-- Seleccionar --"] + opciones_p)
             
             if p_sel_raw != "-- Seleccionar --":
                 cod_sel = p_sel_raw.split(" - ")[0]
                 it = df_i[df_i['codigo'] == cod_sel].iloc[0]
-                with st.expander("📝 Editar Información", expanded=True):
+                with st.expander("📝 Editar Información y Código", expanded=True):
                     col1, col2 = st.columns(2)
                     with col1:
+                        # PERMITIR EDICIÓN MANUAL DEL CÓDIGO PARA CORREGIR SECUENCIAS
+                        e_cod_manual = st.text_input("Código (CAT-SUB-0000)", value=it['codigo'])
                         e_nom = st.text_input("Nombre", value=it['nombre'])
                         e_cat = st.selectbox("Categoría", lista_cats, index=lista_cats.index(it['categoria']) if it['categoria'] in lista_cats else 0)
                         e_sub = st.selectbox("Subcategoría", lista_subs, index=lista_subs.index(it['subcategoria']) if it['subcategoria'] in lista_subs else 0)
                         e_col = st.text_input("Colores", value=it.get('colores', ''))
-                        if st.button("💾 Guardar Cambios"):
-                            # Mantiene el número pero actualiza las siglas
-                            seq_part = it['codigo'].split('-')[-1]
-                            n_cod = f"{e_cat[:3].upper()}-{e_sub[:3].upper()}-{seq_part}"
+                        
+                        if st.button("💾 Actualizar Todo"):
                             supabase.table("productos").update({
+                                "codigo": e_cod_manual.upper(),
                                 "nombre": e_nom, "categoria": e_cat, 
-                                "subcategoria": e_sub, "colores": e_col, "codigo": n_cod
+                                "subcategoria": e_sub, "colores": e_col
                             }).eq("id", it['id']).execute()
+                            st.success("Producto actualizado")
                             st.rerun()
                     with col2:
                         nueva_img = st.file_uploader("Actualizar Imagen", type=["jpg", "png"])
@@ -126,7 +127,7 @@ elif menu == "Inventario":
                                 url = supabase.storage.from_("fotos").get_public_url(fname)
                                 supabase.table("productos").update({"foto_path": url}).eq("id", it['id']).execute()
                                 st.rerun()
-                        if st.button("🗑️ ELIMINAR"):
+                        if st.button("🗑️ ELIMINAR PRODUCTO"):
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
@@ -138,10 +139,9 @@ elif menu == "Inventario":
             column_order=tuple(columnas_visibles),
             column_config={
                 "foto_path": st.column_config.ImageColumn("Imagen"),
-                "precio_inv": st.column_config.NumberColumn("Inversión", format="$%.2f"),
-                "precio_pub": st.column_config.NumberColumn("Venta", format="$%.2f"),
-                "codigo": "Código",
-                "nombre": "Producto"
+                "precio_inv": st.column_config.NumberColumn("Costo Inversión", format="$%.2f"),
+                "precio_pub": st.column_config.NumberColumn("Precio Público", format="$%.2f"),
+                "codigo": "Código", "nombre": "Producto"
             },
             use_container_width=True, hide_index=True
         )
@@ -150,31 +150,23 @@ elif menu == "Inventario":
         with t_admin[0]:
             with st.form("nuevo_p"):
                 c1, c2 = st.columns(2)
-                n_nom, n_cat = c1.text_input("Nombre del Producto*"), c2.selectbox("Categoría*", lista_cats)
+                n_nom, n_cat = c1.text_input("Nombre*"), c2.selectbox("Categoría*", lista_cats)
                 n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores")
-                n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Precio Público ($)")
+                n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Público ($)")
                 n_stk = c1.number_input("Stock Inicial", step=1)
                 
                 if st.form_submit_button("🚀 Registrar"):
-                    # --- NUEVA LÓGICA DE FOLIADO ROBUSTA ---
-                    # 1. Traer todos los códigos de la categoría seleccionada
-                    res_codigos = supabase.table("productos").select("codigo").eq("categoria", n_cat).execute()
-                    
-                    max_num = 0
-                    if res_codigos.data:
-                        for item in res_codigos.data:
+                    # BUSCAR EL MÁXIMO PARA LA CATEGORÍA
+                    res_cods = supabase.table("productos").select("codigo").eq("categoria", n_cat).execute()
+                    max_n = 0
+                    if res_cods.data:
+                        for r in res_cods.data:
                             try:
-                                # Extraer la última parte del código (los números)
-                                num_extraido = int(item['codigo'].split('-')[-1])
-                                if num_extraido > max_num:
-                                    max_num = num_extraido
-                            except:
-                                continue
+                                n = int(r['codigo'].split('-')[-1])
+                                if n > max_n: max_n = n
+                            except: continue
                     
-                    nuevo_folio = max_num + 1
-                    n_seq = str(nuevo_folio).zfill(4)
-                    
-                    # Generar el código final
+                    n_seq = str(max_n + 1).zfill(4)
                     n_cod = f"{n_cat[:3].upper()}-{n_sub[:3].upper()}-{n_seq}"
                     
                     supabase.table("productos").insert({

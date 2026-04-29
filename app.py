@@ -38,7 +38,8 @@ menu = st.sidebar.radio("Menú", ["Ventas", "Inventario", "Configuración", "Rep
 # --- 4. VENTAS ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
-    res = supabase.table("productos").select("*").gt("stock", 0).execute()
+    # Traer productos ordenados por código también en ventas para facilitar búsqueda
+    res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
     if res.data:
         df_v = pd.DataFrame(res.data)
         sel = st.selectbox("📦 Seleccionar Producto", df_v['nombre'])
@@ -67,7 +68,8 @@ if menu == "Ventas":
 # --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
-    res_i = supabase.table("productos").select("*").order("categoria").execute()
+    # ORDENADO POR CÓDIGO ALFABÉTICAMENTE DESDE LA BASE DE DATOS
+    res_i = supabase.table("productos").select("*").order("codigo").execute()
     df_i = pd.DataFrame(res_i.data) if res_i.data else pd.DataFrame()
     lista_cats = obtener_categorias()
 
@@ -75,9 +77,14 @@ elif menu == "Inventario":
 
     with t_lista:
         if role == "admin" and not df_i.empty:
-            p_sel = st.selectbox("🛠️ Gestionar Producto:", ["-- Seleccionar --"] + sorted(df_i['nombre'].tolist()))
-            if p_sel != "-- Seleccionar --":
-                it = df_i[df_i['nombre'] == p_sel].iloc[0]
+            st.subheader("🛠️ Gestionar Producto:")
+            # Selector también ordenado por código para consistencia
+            opciones_p = [f"{r['codigo']} - {r['nombre']}" for r in res_i.data]
+            p_sel_raw = st.selectbox("Selecciona un producto para gestionar:", ["-- Seleccionar --"] + opciones_p)
+            
+            if p_sel_raw != "-- Seleccionar --":
+                cod_sel = p_sel_raw.split(" - ")[0]
+                it = df_i[df_i['codigo'] == cod_sel].iloc[0]
                 with st.expander("📝 Editar Información / Eliminar", expanded=True):
                     col1, col2 = st.columns(2)
                     with col1:
@@ -106,7 +113,7 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
-        # ORDEN DE COLUMNAS SOLICITADO
+        # TABLA DE EXISTENCIAS ORDENADA
         st.data_editor(
             df_i,
             column_order=("foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_inv", "precio_pub", "nombre"),
@@ -162,7 +169,7 @@ elif menu == "Configuración":
                 st.error(f"Error: {e}")
     
     st.divider()
-    res_conf = supabase.table("configuracion").select("*").eq("tipo", "categoria").execute()
+    res_conf = supabase.table("configuracion").select("*").eq("tipo", "categoria").order("valor").execute()
     if res_conf.data:
         for c in res_conf.data:
             col_a, col_b = st.columns([4, 1])
@@ -174,7 +181,7 @@ elif menu == "Configuración":
 # --- 7. REPORTES ---
 elif menu == "Reportes":
     st.header("📊 Reportes")
-    res_v = supabase.table("ventas").select("*").execute()
+    res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     if res_v.data:
         df_r = pd.DataFrame(res_v.data)
         st.metric("Ventas Totales", f"${df_r['precio_total'].sum():,.2f}")

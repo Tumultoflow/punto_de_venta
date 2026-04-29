@@ -22,7 +22,8 @@ def obtener_config(tipo):
         return ["GENERAL"]
 
 # --- 3. SISTEMA DE AUTENTICACIÓN ---
-if "auth" not in st.session_state: st.session_state.auth = False
+if "auth" not in st.session_state: 
+    st.session_state.auth = False
 
 if not st.session_state.auth:
     st.title("🔐 Acceso Duo Legal")
@@ -36,7 +37,7 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# --- BOTÓN DE CERRAR SESIÓN ---
+# --- BARRA LATERAL (Cerrar Sesión y Navegación) ---
 with st.sidebar:
     st.markdown(f"**Usuario:** `{st.session_state.role.upper()}`")
     if st.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
@@ -77,7 +78,7 @@ if menu == "Ventas":
                 st.success("Venta guardada")
                 st.rerun()
 
-# --- 5. INVENTARIO ---
+# --- 5. INVENTARIO (Con Privacidad de Precios y Orden Alfabético) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -123,10 +124,11 @@ elif menu == "Inventario":
                                 url = supabase.storage.from_("fotos").get_public_url(fname)
                                 supabase.table("productos").update({"foto_path": url}).eq("id", it['id']).execute()
                                 st.rerun()
-                        if st.button("🗑️ ELIMINAR PRODUCTO"):
+                        if st.button("🗑️ ELIMINAR"):
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
+        # Filtrado de columnas por rol
         columnas_visibles = ["foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_pub", "nombre"]
         if role == "admin": columnas_visibles.insert(6, "precio_inv")
 
@@ -135,25 +137,22 @@ elif menu == "Inventario":
             column_order=tuple(columnas_visibles),
             column_config={
                 "foto_path": st.column_config.ImageColumn("Imagen"),
-                "precio_inv": st.column_config.NumberColumn("Costo Inversión", format="$%.2f"),
-                "precio_pub": st.column_config.NumberColumn("Precio Público", format="$%.2f"),
+                "precio_inv": st.column_config.NumberColumn("Inversión ($)", format="$%.2f"),
+                "precio_pub": st.column_config.NumberColumn("Venta ($)", format="$%.2f"),
+                "stock": "Stock", "codigo": "Código"
             },
-            use_container_width=True,
-            hide_index=True
+            use_container_width=True, hide_index=True
         )
 
     if role == "admin" and t_admin:
         with t_admin[0]:
             with st.form("nuevo_p"):
                 c1, c2 = st.columns(2)
-                n_nom = c1.text_input("Nombre*")
-                n_cat = c2.selectbox("Categoría*", lista_cats)
-                n_sub = c1.selectbox("Subcategoría*", lista_subs)
-                n_col = c2.text_input("Colores")
-                n_inv = c1.number_input("Inversión")
-                n_pub = c2.number_input("Público")
-                n_stk = c1.number_input("Stock", step=1)
-                if st.form_submit_button("🚀 Crear"):
+                n_nom, n_cat = c1.text_input("Nombre*"), c2.selectbox("Categoría*", lista_cats)
+                n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores")
+                n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Precio Público ($)")
+                n_stk = c1.number_input("Stock Inicial", step=1)
+                if st.form_submit_button("🚀 Registrar Producto"):
                     res_c = supabase.table("productos").select("id", count="exact").eq("categoria", n_cat).eq("subcategoria", n_sub).execute()
                     n_seq = str((res_c.count or 0) + 1).zfill(3)
                     n_cod = f"{n_cat[:3].upper()}-{n_sub[:2].upper()}-{n_nom[:3].upper()}-{n_seq}"
@@ -164,51 +163,52 @@ elif menu == "Inventario":
                     }).execute()
                     st.rerun()
 
-# --- 6. CONFIGURACIÓN (CATEGORÍAS Y SUBCATEGORÍAS) ---
+# --- 6. CONFIGURACIÓN (Gestión de Listas) ---
 elif menu == "Configuración":
-    st.header("⚙️ Configuración Maestra")
+    st.header("⚙️ Configuración de Listas")
+    c_cat, c_sub = st.columns(2)
     
-    col_cat, col_sub = st.columns(2)
-    
-    with col_cat:
+    with c_cat:
         st.subheader("📁 Categorías")
-        c_nueva = st.text_input("Nueva Categoría").upper()
-        if st.button("➕ Añadir Categoría"):
-            if c_nueva:
-                supabase.table("configuracion").insert({"tipo": "categoria", "valor": c_nueva}).execute()
-                st.rerun()
-        
-        st.divider()
+        n_c = st.text_input("Nueva Categoría").upper()
+        if st.button("➕ Añadir Cat"):
+            if n_c: supabase.table("configuracion").insert({"tipo": "categoria", "valor": n_c}).execute(); st.rerun()
         res_c = supabase.table("configuracion").select("*").eq("tipo", "categoria").order("valor").execute()
         for c in res_c.data:
             ca, cb = st.columns([4, 1])
             ca.write(c['valor'])
-            if cb.button("🗑️", key=f"cat_{c['id']}"):
-                supabase.table("configuracion").delete().eq("id", c['id']).execute()
-                st.rerun()
+            if cb.button("🗑️", key=f"c_{c['id']}"): supabase.table("configuracion").delete().eq("id", c['id']).execute(); st.rerun()
 
-    with col_sub:
+    with c_sub:
         st.subheader("📂 Subcategorías")
-        s_nueva = st.text_input("Nueva Subcategoría").upper()
-        if st.button("➕ Añadir Subcategoría"):
-            if s_nueva:
-                supabase.table("configuracion").insert({"tipo": "subcategoria", "valor": s_nueva}).execute()
-                st.rerun()
-        
-        st.divider()
+        n_s = st.text_input("Nueva Subcategoría").upper()
+        if st.button("➕ Añadir Sub"):
+            if n_s: supabase.table("configuracion").insert({"tipo": "subcategoria", "valor": n_s}).execute(); st.rerun()
         res_s = supabase.table("configuracion").select("*").eq("tipo", "subcategoria").order("valor").execute()
         for s in res_s.data:
             sa, sb = st.columns([4, 1])
             sa.write(s['valor'])
-            if sb.button("🗑️", key=f"sub_{s['id']}"):
-                supabase.table("configuracion").delete().eq("id", s['id']).execute()
-                st.rerun()
+            if sb.button("🗑️", key=f"s_{s['id']}"): supabase.table("configuracion").delete().eq("id", s['id']).execute(); st.rerun()
 
-# --- 7. REPORTES ---
+# --- 7. REPORTES (Semanal y Ganancias) ---
 elif menu == "Reportes":
-    st.header("📊 Reportes")
+    st.header("📊 Reportes de Ganancias Semanales")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     if res_v.data:
         df_r = pd.DataFrame(res_v.data)
-        st.metric("Ventas Totales", f"${df_r['precio_total'].sum():,.2f}")
-        st.dataframe(df_r, use_container_width=True)
+        df_r['fecha_venta'] = pd.to_datetime(df_r['fecha_venta'])
+        
+        col1, col2 = st.columns(2)
+        col1.metric("Ingresos Totales", f"${df_r['precio_total'].sum():,.2f}")
+        col2.metric("Utilidad Neta Total", f"${df_r['ganancia'].sum():,.2f}")
+
+        st.divider()
+        df_r['Semana'] = df_r['fecha_venta'].dt.to_period('W-MON').apply(lambda r: r.start_time)
+        rep_sem = df_r.groupby('Semana').agg({'precio_total': 'sum', 'ganancia': 'sum', 'producto': 'count'}).sort_index(ascending=False)
+        rep_sem.columns = ['Ventas ($)', 'Ganancia ($)', 'Cantidad']
+        
+        st.subheader("📈 Resumen por Semana")
+        st.dataframe(rep_sem.style.format("${:,.2f}", subset=['Ventas ($)', 'Ganancia ($)']), use_container_width=True)
+        st.bar_chart(rep_sem[['Ventas ($)', 'Ganancia ($)']])
+    else:
+        st.info("Sin datos de ventas.")

@@ -21,24 +21,36 @@ def obtener_categorias():
     except:
         return ["GENERAL"]
 
-# --- 3. LOGIN ---
+# --- 3. SISTEMA DE AUTENTICACIÓN ---
 if "auth" not in st.session_state: st.session_state.auth = False
+
 if not st.session_state.auth:
     st.title("🔐 Acceso Duo Legal")
     u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
-        if u == "admin" and p == "admin1": st.session_state.auth, st.session_state.role = True, "admin"
-        elif u == "equipo" and p == "equipo1": st.session_state.auth, st.session_state.role = True, "equipo"
-        st.rerun()
+        if u == "admin" and p == "admin1": 
+            st.session_state.auth, st.session_state.role = True, "admin"
+            st.rerun()
+        elif u == "equipo" and p == "equipo1": 
+            st.session_state.auth, st.session_state.role = True, "equipo"
+            st.rerun()
     st.stop()
 
+# --- BOTÓN DE CERRAR SESIÓN EN LA BARRA LATERAL ---
+with st.sidebar:
+    st.markdown(f"**Usuario:** `{st.session_state.role.upper()}`")
+    if st.button("🚪 CERRAR SESIÓN", use_container_width=True, type="primary"):
+        st.session_state.auth = False
+        st.session_state.role = None
+        st.rerun()
+    st.divider()
+
 role = st.session_state.role
-menu = st.sidebar.radio("Menú", ["Ventas", "Inventario", "Configuración", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
+menu = st.sidebar.radio("Menú Principal", ["Ventas", "Inventario", "Configuración", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
 # --- 4. VENTAS ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
-    # Traer productos ordenados por código también en ventas para facilitar búsqueda
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
     if res.data:
         df_v = pd.DataFrame(res.data)
@@ -68,7 +80,6 @@ if menu == "Ventas":
 # --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
-    # ORDENADO POR CÓDIGO ALFABÉTICAMENTE DESDE LA BASE DE DATOS
     res_i = supabase.table("productos").select("*").order("codigo").execute()
     df_i = pd.DataFrame(res_i.data) if res_i.data else pd.DataFrame()
     lista_cats = obtener_categorias()
@@ -78,7 +89,6 @@ elif menu == "Inventario":
     with t_lista:
         if role == "admin" and not df_i.empty:
             st.subheader("🛠️ Gestionar Producto:")
-            # Selector también ordenado por código para consistencia
             opciones_p = [f"{r['codigo']} - {r['nombre']}" for r in res_i.data]
             p_sel_raw = st.selectbox("Selecciona un producto para gestionar:", ["-- Seleccionar --"] + opciones_p)
             
@@ -113,7 +123,6 @@ elif menu == "Inventario":
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
-        # TABLA DE EXISTENCIAS ORDENADA
         st.data_editor(
             df_i,
             column_order=("foto_path", "codigo", "stock", "categoria", "subcategoria", "colores", "precio_inv", "precio_pub", "nombre"),

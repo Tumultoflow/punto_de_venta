@@ -3,6 +3,7 @@ import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime
 import pytz
+import re
 
 # --- 1. CONFIGURACIÓN Y CONEXIÓN ---
 ZONA_LOCAL = pytz.timezone('America/Mexico_City')
@@ -108,8 +109,9 @@ elif menu == "Inventario":
                         e_sub = st.selectbox("Subcategoría", lista_subs, index=lista_subs.index(it['subcategoria']) if it['subcategoria'] in lista_subs else 0)
                         e_col = st.text_input("Colores", value=it.get('colores', ''))
                         if st.button("💾 Guardar Cambios"):
-                            seq_final = it['codigo'].split('-')[-1]
-                            n_cod = f"{e_cat[:3].upper()}-{e_sub[:3].upper()}-{seq_final}"
+                            # Mantiene el número pero actualiza las siglas
+                            seq_part = it['codigo'].split('-')[-1]
+                            n_cod = f"{e_cat[:3].upper()}-{e_sub[:3].upper()}-{seq_part}"
                             supabase.table("productos").update({
                                 "nombre": e_nom, "categoria": e_cat, 
                                 "subcategoria": e_sub, "colores": e_col, "codigo": n_cod
@@ -152,14 +154,27 @@ elif menu == "Inventario":
                 n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores")
                 n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Precio Público ($)")
                 n_stk = c1.number_input("Stock Inicial", step=1)
+                
                 if st.form_submit_button("🚀 Registrar"):
-                    # LÓGICA DE SECUENCIA POR CATEGORÍA
-                    # Contamos cuántos productos existen en la categoría principal seleccionada
-                    res_count = supabase.table("productos").select("id", count="exact").eq("categoria", n_cat).execute()
-                    proxim_numero = (res_count.count or 0) + 1
-                    n_seq = str(proxim_numero).zfill(4)
+                    # --- NUEVA LÓGICA DE FOLIADO ROBUSTA ---
+                    # 1. Traer todos los códigos de la categoría seleccionada
+                    res_codigos = supabase.table("productos").select("codigo").eq("categoria", n_cat).execute()
                     
-                    # Generamos el código: CAT(3)-SUB(3)-0000
+                    max_num = 0
+                    if res_codigos.data:
+                        for item in res_codigos.data:
+                            try:
+                                # Extraer la última parte del código (los números)
+                                num_extraido = int(item['codigo'].split('-')[-1])
+                                if num_extraido > max_num:
+                                    max_num = num_extraido
+                            except:
+                                continue
+                    
+                    nuevo_folio = max_num + 1
+                    n_seq = str(nuevo_folio).zfill(4)
+                    
+                    # Generar el código final
                     n_cod = f"{n_cat[:3].upper()}-{n_sub[:3].upper()}-{n_seq}"
                     
                     supabase.table("productos").insert({

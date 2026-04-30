@@ -10,7 +10,7 @@ SUPABASE_URL = "https://gfileauwnaarqvsndlby.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmaWxlYXV3bmFhcnF2c25kbGJ5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY5MDk2MTAsImV4cCI6MjA5MjQ4NTYxMH0.vVeNljQC_yyfmP1MEnSyRdtqq59yZg1sm8SgrroQBcs"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-st.set_page_config(page_title="TUMULTOFLOW ULTIMATE", layout="wide", page_icon="⚖️")
+st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
 # --- 2. FUNCIONES DE APOYO ---
 def obtener_config(tipo):
@@ -26,7 +26,7 @@ if "carrito" not in st.session_state: st.session_state.carrito = []
 
 # --- 4. AUTENTICACIÓN ---
 if not st.session_state.auth:
-    st.title("🔐 Acceso Duo Legal")
+    st.title("🔐 Acceso")
     u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
         if u == "admin" and p == "admin1": 

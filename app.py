@@ -49,64 +49,104 @@ with st.sidebar:
 role = st.session_state.role
 menu = st.sidebar.radio("Menú Principal", ["Ventas", "Inventario", "Configuración", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
-# --- 4. VENTAS (AHORA CON SELECCIÓN DE COLOR) ---
+# --- 4. VENTAS (MULTI-COLOR) ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
+    
+    # Inicializar carrito temporal si no existe
+    if "carrito" not in st.session_state:
+        st.session_state.carrito = []
+
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
     
     if res.data:
         df_v = pd.DataFrame(res.data)
-        # Formato de búsqueda: CODIGO - NOMBRE
         opciones_busqueda = [f"{r['codigo']} - {r['nombre']}" for r in res.data]
         sel_raw = st.selectbox("📦 Seleccionar Producto", opciones_busqueda)
         
         cod_v = sel_raw.split(" - ")[0]
         item = df_v[df_v['codigo'] == cod_v].iloc[0]
         
-        c1, c2 = st.columns(2)
-        with c1:
-            if item.get('foto_path'): 
-                st.image(item['foto_path'], width=300)
-            st.info(f"**Código:** {item['codigo']}  \n**Existencia:** {item['stock']} unidades")
+        col_img, col_form = st.columns([1, 2])
         
-        with c2:
-            # --- Lógica de Colores ---
-            lista_colores = []
-            if item.get('colores'):
-                # Separamos por comas y limpiamos espacios
-                lista_colores = [c.strip().upper() for c in item['colores'].split(',') if c.strip()]
-            
-            if lista_colores:
-                v_color = st.selectbox("🎨 Seleccionar Color", lista_colores)
-            else:
-                v_color = "ÚNICO / NA"
-                st.write("🎨 **Color:** No especificado")
+        with col_img:
+            if item.get('foto_path'): 
+                st.image(item['foto_path'], width=280)
+            st.metric("Stock Disponible", f"{item['stock']} pzs")
 
-            v_precio = st.number_input("💵 Precio de Venta", value=float(item['precio_pub']))
-            v_cant = st.number_input("Cantidad", 1, int(item['stock']))
-            v_vendedor = st.text_input("👤 Vendedor")
+        with col_form:
+            st.subheader("Configurar Colores")
+            c1, c2, c3 = st.columns([2, 1, 1])
+            
+            # Obtener lista de colores
+            lista_colores = [c.strip().upper() for c in item['colores'].split(',') if c.strip()] if item.get('colores') else ["ÚNICO/NA"]
+            
+            v_color = c1.selectbox("🎨 Color", lista_colores)
+            v_cant = c2.number_input("Cant", 1, int(item['stock']), key="cant_selector")
+            v_precio = c3.number_input("Precio ($)", value=float(item['precio_pub']))
+
+            if st.button("➕ Añadir a esta venta"):
+                # Validar que no exceda el stock sumando lo ya añadido al carrito
+                ya_en_carrito = sum(c['cantidad'] for c in st.session_state.carrito)
+                if (ya_en_carrito + v_cant) <= item['stock']:
+                    st.session_state.carrito.append({
+                        "id": item['id'],
+                        "codigo": item['codigo'],
+                        "nombre": item['nombre'],
+                        "color": v_color,
+                        "cantidad": v_cant,
+                        "precio_unit": v_precio,
+                        "precio_inv": item['precio_inv']
+                    })
+                    st.toast(f"Añadido: {v_color}")
+                else:
+                    st.error("No hay suficiente stock para añadir esa cantidad.")
+
+        # Mostrar Carrito / Resumen de la venta actual
+        if st.session_state.carrito:
+            st.divider()
+            st.subheader("📋 Resumen de la Venta")
+            df_carrito = pd.DataFrame(st.session_state.carrito)
+            st.table(df_carrito[["nombre", "color", "cantidad", "precio_unit"]])
+            
+            total_venta = (df_carrito['cantidad'] * df_carrito['precio_unit']).sum()
+            st.markdown(f"### **Total a Pagar: ${total_venta:,.2f}**")
+            
+            v_vendedor = st.text_input("👤 Vendedor", key="vendedor_v")
             v_fecha = st.date_input("📅 Fecha", datetime.now(ZONA_LOCAL))
 
-            if st.button("🚀 Confirmar Venta", use_container_width=True, type="primary"):
-                # 1. Actualizar Stock
-                supabase.table("productos").update({"stock": int(item['stock'] - v_cant)}).eq("id", item['id']).execute()
-                
-                # 2. Registrar Venta (Incluyendo el color seleccionado)
-                supabase.table("ventas").insert({
-                    "producto": item['nombre'], 
-                    "codigo_prod": item['codigo'],
-                    "color": v_color, # Guardamos el color elegido
-                    "cantidad": v_cant, 
-                    "precio_total": v_precio * v_cant,
-                    "fecha_venta": v_fecha.isoformat(), 
-                    "vendedor": v_vendedor,
-                    "ganancia": (v_precio - item['precio_inv']) * v_cant
-                }).execute()
-                
-                st.success(f"¡Venta realizada! {item['nombre']} ({v_color})")
+            cc1, cc2 = st.columns(2)
+            if cc1.button("🗑️ Cancelar Venta", use_container_width=True):
+                st.session_state.carrito = []
                 st.rerun()
 
-# --- 5. INVENTARIO (CON EDICIÓN DE CÓDIGOS Y COLORES) ---
+            if cc2.button("🚀 CONFIRMAR TODA LA VENTA", type="primary", use_container_width=True):
+                if v_vendedor:
+                    for prod in st.session_state.carrito:
+                        # 1. Restar Stock (se hace por cada línea)
+                        res_prod = supabase.table("productos").select("stock").eq("id", prod['id']).execute()
+                        stock_actual = res_prod.data[0]['stock']
+                        supabase.table("productos").update({"stock": stock_actual - prod['cantidad']}).eq("id", prod['id']).execute()
+                        
+                        # 2. Insertar en Ventas
+                        supabase.table("ventas").insert({
+                            "producto": prod['nombre'], 
+                            "codigo_prod": prod['codigo'],
+                            "color": prod['color'],
+                            "cantidad": prod['cantidad'], 
+                            "precio_total": prod['precio_unit'] * prod['cantidad'],
+                            "fecha_venta": v_fecha.isoformat(), 
+                            "vendedor": v_vendedor,
+                            "ganancia": (prod['precio_unit'] - prod['precio_inv']) * prod['cantidad']
+                        }).execute()
+                    
+                    st.success("¡Venta procesada con éxito!")
+                    st.session_state.carrito = []
+                    st.rerun()
+                else:
+                    st.warning("Por favor ingresa el nombre del vendedor.")
+
+# --- 5. INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -123,27 +163,24 @@ elif menu == "Inventario":
         if role == "admin" and not df_i.empty:
             st.subheader("🛠️ Gestionar Producto:")
             opciones_p = [f"{r['codigo']} - {r['nombre']}" for r in res_i.data]
-            p_sel_raw = st.selectbox("Selecciona un producto para editar:", ["-- Seleccionar --"] + opciones_p)
+            p_sel_raw = st.selectbox("Selecciona un producto:", ["-- Seleccionar --"] + opciones_p)
             
             if p_sel_raw != "-- Seleccionar --":
                 cod_sel = p_sel_raw.split(" - ")[0]
                 it = df_i[df_i['codigo'] == cod_sel].iloc[0]
-                with st.expander("📝 Editar Información y Código", expanded=True):
+                with st.expander("📝 Editar Información", expanded=True):
                     col1, col2 = st.columns(2)
                     with col1:
-                        e_cod_manual = st.text_input("Código (CAT-SUB-0000)", value=it['codigo'])
+                        e_cod = st.text_input("Código", value=it['codigo'])
                         e_nom = st.text_input("Nombre", value=it['nombre'])
                         e_cat = st.selectbox("Categoría", lista_cats, index=lista_cats.index(it['categoria']) if it['categoria'] in lista_cats else 0)
                         e_sub = st.selectbox("Subcategoría", lista_subs, index=lista_subs.index(it['subcategoria']) if it['subcategoria'] in lista_subs else 0)
-                        e_col = st.text_input("Colores (Separados por coma: Rojo, Azul...)", value=it.get('colores', ''))
-                        
-                        if st.button("💾 Actualizar Todo"):
+                        e_col = st.text_input("Colores (Rojo, Azul...)", value=it.get('colores', ''))
+                        if st.button("💾 Guardar"):
                             supabase.table("productos").update({
-                                "codigo": e_cod_manual.upper(),
-                                "nombre": e_nom, "categoria": e_cat, 
+                                "codigo": e_cod.upper(), "nombre": e_nom, "categoria": e_cat, 
                                 "subcategoria": e_sub, "colores": e_col
                             }).eq("id", it['id']).execute()
-                            st.success("Producto actualizado")
                             st.rerun()
                     with col2:
                         nueva_img = st.file_uploader("Actualizar Imagen", type=["jpg", "png"])
@@ -154,47 +191,24 @@ elif menu == "Inventario":
                                 url = supabase.storage.from_("fotos").get_public_url(fname)
                                 supabase.table("productos").update({"foto_path": url}).eq("id", it['id']).execute()
                                 st.rerun()
-                        if st.button("🗑️ ELIMINAR PRODUCTO"):
+                        if st.button("🗑️ ELIMINAR"):
                             supabase.table("productos").delete().eq("id", it['id']).execute()
                             st.rerun()
 
-        columnas_visibles = ["foto_path", "codigo", "nombre", "stock", "categoria", "subcategoria", "colores", "precio_pub"]
-        if role == "admin": columnas_visibles.insert(7, "precio_inv")
-
-        st.data_editor(
-            df_i,
-            column_order=tuple(columnas_visibles),
-            column_config={
-                "foto_path": st.column_config.ImageColumn("Imagen"),
-                "precio_inv": st.column_config.NumberColumn("Inversión", format="$%.2f"),
-                "precio_pub": st.column_config.NumberColumn("Venta", format="$%.2f"),
-                "codigo": "Código", "nombre": "Producto"
-            },
-            use_container_width=True, hide_index=True
-        )
+        st.data_editor(df_i, use_container_width=True, hide_index=True)
 
     if role == "admin" and t_admin:
         with t_admin[0]:
             with st.form("nuevo_p"):
                 c1, c2 = st.columns(2)
                 n_nom, n_cat = c1.text_input("Nombre*"), c2.selectbox("Categoría*", lista_cats)
-                n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores (Rojo, Azul, Negro...)")
+                n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores")
                 n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Público ($)")
                 n_stk = c1.number_input("Stock Inicial", step=1)
-                
                 if st.form_submit_button("🚀 Registrar"):
                     res_cods = supabase.table("productos").select("codigo").eq("categoria", n_cat).execute()
-                    max_n = 0
-                    if res_cods.data:
-                        for r in res_cods.data:
-                            try:
-                                n = int(r['codigo'].split('-')[-1])
-                                if n > max_n: max_n = n
-                            except: continue
-                    
-                    n_seq = str(max_n + 1).zfill(4)
-                    n_cod = f"{n_cat[:3].upper()}-{n_sub[:3].upper()}-{n_seq}"
-                    
+                    max_n = max([int(r['codigo'].split('-')[-1]) for r in res_cods.data if r['codigo'].split('-')[-1].isdigit()] + [0])
+                    n_cod = f"{n_cat[:3].upper()}-{n_sub[:3].upper()}-{(max_n+1):04d}"
                     supabase.table("productos").insert({
                         "codigo": n_cod, "nombre": n_nom, "categoria": n_cat, 
                         "subcategoria": n_sub, "colores": n_col, 
@@ -229,20 +243,14 @@ elif menu == "Configuración":
 
 # --- 7. REPORTES ---
 elif menu == "Reportes":
-    st.header("📊 Reportes Semanales")
+    st.header("📊 Reportes")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     if res_v.data:
         df_r = pd.DataFrame(res_v.data)
         df_r['fecha_venta'] = pd.to_datetime(df_r['fecha_venta'])
         col1, col2 = st.columns(2)
         col1.metric("Ventas Totales", f"${df_r['precio_total'].sum():,.2f}")
-        col2.metric("Utilidad Neta", f"${df_r['ganancia'].sum():,.2f}")
-        
-        st.divider()
-        st.subheader("📝 Detalle de Ventas")
-        # Mostrar el color en la tabla de reportes
-        st.dataframe(df_r[["fecha_venta", "vendedor", "codigo_prod", "producto", "color", "cantidad", "precio_total"]], use_container_width=True)
-        
+        col2.metric("Ganancia Total", f"${df_r['ganancia'].sum():,.2f}")
         st.divider()
         df_r['Semana'] = df_r['fecha_venta'].dt.to_period('W-MON').apply(lambda r: r.start_time)
         rep_sem = df_r.groupby('Semana').agg({'precio_total': 'sum', 'ganancia': 'sum', 'producto': 'count'}).sort_index(ascending=False)

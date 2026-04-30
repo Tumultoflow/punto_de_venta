@@ -26,7 +26,7 @@ if "auth" not in st.session_state:
     st.session_state.auth = False
 
 if not st.session_state.auth:
-    st.title("🔐 Acceso Duo Legal")
+    st.title("🔐 Acceso")
     u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
     if st.button("Entrar"):
         if u == "admin" and p == "admin1": 
@@ -49,36 +49,64 @@ with st.sidebar:
 role = st.session_state.role
 menu = st.sidebar.radio("Menú Principal", ["Ventas", "Inventario", "Configuración", "Reportes"] if role == "admin" else ["Ventas", "Inventario"])
 
-# --- 4. VENTAS ---
+# --- 4. VENTAS (AHORA CON SELECCIÓN DE COLOR) ---
 if menu == "Ventas":
     st.header("💰 Nueva Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
+    
     if res.data:
         df_v = pd.DataFrame(res.data)
-        sel = st.selectbox("📦 Seleccionar Producto", df_v['nombre'])
-        item = df_v[df_v['nombre'] == sel].iloc[0]
+        # Formato de búsqueda: CODIGO - NOMBRE
+        opciones_busqueda = [f"{r['codigo']} - {r['nombre']}" for r in res.data]
+        sel_raw = st.selectbox("📦 Seleccionar Producto", opciones_busqueda)
+        
+        cod_v = sel_raw.split(" - ")[0]
+        item = df_v[df_v['codigo'] == cod_v].iloc[0]
         
         c1, c2 = st.columns(2)
         with c1:
-            if item.get('foto_path'): st.image(item['foto_path'], width=250)
-            st.info(f"Código: {item['codigo']} | Existencia: {item['stock']}")
+            if item.get('foto_path'): 
+                st.image(item['foto_path'], width=300)
+            st.info(f"**Código:** {item['codigo']}  \n**Existencia:** {item['stock']} unidades")
+        
         with c2:
-            v_precio = st.number_input("💵 Precio Final (Editable)", value=float(item['precio_pub']))
-            v_fecha = st.date_input("📅 Fecha", datetime.now(ZONA_LOCAL))
+            # --- Lógica de Colores ---
+            lista_colores = []
+            if item.get('colores'):
+                # Separamos por comas y limpiamos espacios
+                lista_colores = [c.strip().upper() for c in item['colores'].split(',') if c.strip()]
+            
+            if lista_colores:
+                v_color = st.selectbox("🎨 Seleccionar Color", lista_colores)
+            else:
+                v_color = "ÚNICO / NA"
+                st.write("🎨 **Color:** No especificado")
+
+            v_precio = st.number_input("💵 Precio de Venta", value=float(item['precio_pub']))
             v_cant = st.number_input("Cantidad", 1, int(item['stock']))
             v_vendedor = st.text_input("👤 Vendedor")
-            if st.button("🚀 Confirmar Venta"):
+            v_fecha = st.date_input("📅 Fecha", datetime.now(ZONA_LOCAL))
+
+            if st.button("🚀 Confirmar Venta", use_container_width=True, type="primary"):
+                # 1. Actualizar Stock
                 supabase.table("productos").update({"stock": int(item['stock'] - v_cant)}).eq("id", item['id']).execute()
+                
+                # 2. Registrar Venta (Incluyendo el color seleccionado)
                 supabase.table("ventas").insert({
-                    "producto": item['nombre'], "codigo_prod": item['codigo'],
-                    "cantidad": v_cant, "precio_total": v_precio * v_cant,
-                    "fecha_venta": v_fecha.isoformat(), "vendedor": v_vendedor,
+                    "producto": item['nombre'], 
+                    "codigo_prod": item['codigo'],
+                    "color": v_color, # Guardamos el color elegido
+                    "cantidad": v_cant, 
+                    "precio_total": v_precio * v_cant,
+                    "fecha_venta": v_fecha.isoformat(), 
+                    "vendedor": v_vendedor,
                     "ganancia": (v_precio - item['precio_inv']) * v_cant
                 }).execute()
-                st.success("Venta guardada")
+                
+                st.success(f"¡Venta realizada! {item['nombre']} ({v_color})")
                 st.rerun()
 
-# --- 5. INVENTARIO (CON EDICIÓN DE CÓDIGOS) ---
+# --- 5. INVENTARIO (CON EDICIÓN DE CÓDIGOS Y COLORES) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -103,12 +131,11 @@ elif menu == "Inventario":
                 with st.expander("📝 Editar Información y Código", expanded=True):
                     col1, col2 = st.columns(2)
                     with col1:
-                        # PERMITIR EDICIÓN MANUAL DEL CÓDIGO PARA CORREGIR SECUENCIAS
                         e_cod_manual = st.text_input("Código (CAT-SUB-0000)", value=it['codigo'])
                         e_nom = st.text_input("Nombre", value=it['nombre'])
                         e_cat = st.selectbox("Categoría", lista_cats, index=lista_cats.index(it['categoria']) if it['categoria'] in lista_cats else 0)
                         e_sub = st.selectbox("Subcategoría", lista_subs, index=lista_subs.index(it['subcategoria']) if it['subcategoria'] in lista_subs else 0)
-                        e_col = st.text_input("Colores", value=it.get('colores', ''))
+                        e_col = st.text_input("Colores (Separados por coma: Rojo, Azul...)", value=it.get('colores', ''))
                         
                         if st.button("💾 Actualizar Todo"):
                             supabase.table("productos").update({
@@ -139,8 +166,8 @@ elif menu == "Inventario":
             column_order=tuple(columnas_visibles),
             column_config={
                 "foto_path": st.column_config.ImageColumn("Imagen"),
-                "precio_inv": st.column_config.NumberColumn("Costo Inversión", format="$%.2f"),
-                "precio_pub": st.column_config.NumberColumn("Precio Público", format="$%.2f"),
+                "precio_inv": st.column_config.NumberColumn("Inversión", format="$%.2f"),
+                "precio_pub": st.column_config.NumberColumn("Venta", format="$%.2f"),
                 "codigo": "Código", "nombre": "Producto"
             },
             use_container_width=True, hide_index=True
@@ -151,12 +178,11 @@ elif menu == "Inventario":
             with st.form("nuevo_p"):
                 c1, c2 = st.columns(2)
                 n_nom, n_cat = c1.text_input("Nombre*"), c2.selectbox("Categoría*", lista_cats)
-                n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores")
+                n_sub, n_col = c1.selectbox("Subcategoría*", lista_subs), c2.text_input("Colores (Rojo, Azul, Negro...)")
                 n_inv, n_pub = c1.number_input("Inversión ($)"), c2.number_input("Público ($)")
                 n_stk = c1.number_input("Stock Inicial", step=1)
                 
                 if st.form_submit_button("🚀 Registrar"):
-                    # BUSCAR EL MÁXIMO PARA LA CATEGORÍA
                     res_cods = supabase.table("productos").select("codigo").eq("categoria", n_cat).execute()
                     max_n = 0
                     if res_cods.data:
@@ -210,7 +236,13 @@ elif menu == "Reportes":
         df_r['fecha_venta'] = pd.to_datetime(df_r['fecha_venta'])
         col1, col2 = st.columns(2)
         col1.metric("Ventas Totales", f"${df_r['precio_total'].sum():,.2f}")
-        col2.metric("Ganancia Total", f"${df_r['ganancia'].sum():,.2f}")
+        col2.metric("Utilidad Neta", f"${df_r['ganancia'].sum():,.2f}")
+        
+        st.divider()
+        st.subheader("📝 Detalle de Ventas")
+        # Mostrar el color en la tabla de reportes
+        st.dataframe(df_r[["fecha_venta", "vendedor", "codigo_prod", "producto", "color", "cantidad", "precio_total"]], use_container_width=True)
+        
         st.divider()
         df_r['Semana'] = df_r['fecha_venta'].dt.to_period('W-MON').apply(lambda r: r.start_time)
         rep_sem = df_r.groupby('Semana').agg({'precio_total': 'sum', 'ganancia': 'sum', 'producto': 'count'}).sort_index(ascending=False)

@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime
+from datetime import datetime, time
 import pytz
 
 # --- 1. CONFIGURACIÓN Y CONEXIÓN ---
@@ -43,7 +43,7 @@ with st.sidebar:
     menu = st.radio("Menú Principal", ["Ventas", "Inventario", "Configuración", "Reportes"] if st.session_state.role == "admin" else ["Ventas", "Inventario"])
     if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
         st.session_state.auth = False
-        st.session_state.carrito = [] # Limpiar carrito al salir
+        st.session_state.carrito = []
         st.rerun()
 
 # --- 5. SECCIÓN: VENTAS ---
@@ -67,7 +67,6 @@ if menu == "Ventas":
             v_cant = st.number_input("Cantidad", 1, int(item['stock']))
             v_pre = st.number_input("Precio Venta", value=float(item['precio_pub']))
             if st.button("➕ Añadir al Carrito"):
-                # ID único basado en tiempo exacto para evitar KeyErrors
                 id_temp = datetime.now().timestamp()
                 st.session_state.carrito.append({
                     "temp_id": str(id_temp),
@@ -82,18 +81,13 @@ if menu == "Ventas":
             st.subheader("🛒 Carrito de Compra")
             
             total_venta = 0
-            # Usamos una copia de la lista para iterar y poder borrar sin errores de índice
             for i, p in enumerate(st.session_state.carrito):
                 col_item, col_del = st.columns([6, 1])
                 subtotal = p['cantidad'] * p['precio']
                 total_venta += subtotal
-                
-                # Obtener ID con seguridad
                 t_id = p.get('temp_id', f"old_{i}")
-                
                 with col_item:
                     st.write(f"**{p['codigo']}** - {p['nombre']} ({p['color']}) | {p['cantidad']} pzs x ${p['precio']:,.2f} = **${subtotal:,.2f}**")
-                
                 with col_del:
                     if st.button("🗑️", key=f"del_{t_id}"):
                         st.session_state.carrito.pop(i)
@@ -101,22 +95,41 @@ if menu == "Ventas":
             
             st.markdown(f"### **Total a Pagar: ${total_venta:,.2f}**")
             
-            v_vend = st.text_input("Vendedor")
+            # --- NUEVA SECCIÓN: DATOS FINALIZACIÓN ---
+            st.divider()
+            f1, f2 = st.columns(2)
+            with f1:
+                v_vendedor = st.text_input("Nombre del Vendedor")
+            with f2:
+                # Selector de fecha manual
+                v_fecha_manual = st.date_input("📅 Fecha de Venta", value=datetime.now(ZONA_LOCAL).date())
+            
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
-                if v_vend:
+                if v_vendedor:
+                    # Combinar fecha elegida con la hora actual
+                    hora_actual = datetime.now(ZONA_LOCAL).time()
+                    fecha_final = datetime.combine(v_fecha_manual, hora_actual).isoformat()
+
                     for p in st.session_state.carrito:
                         stk_q = supabase.table("productos").select("stock").eq("id", p['id']).execute()
                         stk_actual = stk_q.data[0]['stock']
+                        
+                        # Descontar inventario
                         supabase.table("productos").update({"stock": stk_actual - p['cantidad']}).eq("id", p['id']).execute()
+                        
+                        # Registrar venta con fecha elegida
                         supabase.table("ventas").insert({
                             "producto": p['nombre'], "codigo_prod": p['codigo'], "color": p['color'],
                             "cantidad": p['cantidad'], "precio_total": p['precio'] * p['cantidad'],
-                            "vendedor": v_vend, "ganancia": (p['precio'] - p['precio_inv']) * p['cantidad'],
-                            "foto_path": p['foto'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()
+                            "vendedor": v_vendedor, "ganancia": (p['precio'] - p['precio_inv']) * p['cantidad'],
+                            "foto_path": p['foto'], "fecha_venta": fecha_final
                         }).execute()
+                    
                     st.session_state.carrito = []
-                    st.success("Venta realizada")
+                    st.success(f"Venta registrada con fecha: {v_fecha_manual}")
                     st.rerun()
+                else:
+                    st.error("Por favor, ingresa el nombre del vendedor.")
 
 # --- 6. SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
@@ -143,7 +156,6 @@ elif menu == "Inventario":
                         with e_c1:
                             idx_cat = cats.index(it_edit['categoria']) if it_edit['categoria'] in cats else 0
                             idx_sub = subs.index(it_edit['subcategoria']) if it_edit['subcategoria'] in subs else 0
-                            
                             e_nom = st.text_input("Nombre", value=it_edit['nombre'], key="ed_nom")
                             e_cat = st.selectbox("Categoría", cats, index=idx_cat, key="ed_cat")
                             e_sub = st.selectbox("Subcategoría", subs, index=idx_sub, key="ed_sub")
@@ -152,8 +164,6 @@ elif menu == "Inventario":
                             e_inv = st.number_input("Costo", value=float(it_edit['precio_inv']), key="ed_inv")
                             e_pub = st.number_input("Público", value=float(it_edit['precio_pub']), key="ed_pub")
                             e_stk = st.number_input("Stock", value=int(it_edit['stock']), key="ed_stk")
-                            
-                            # Auto-generación de SKU sugerido
                             sugerencia_sku = f"{e_cat[:3]}-{e_sub[:3]}-{it_edit['codigo'].split('-')[-1]}".upper()
                             e_cod = st.text_input("Código SKU (Auto-generado)", value=sugerencia_sku, key="ed_sku")
                         

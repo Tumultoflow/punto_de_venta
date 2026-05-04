@@ -12,27 +12,31 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
-# --- 2. FUNCIONES DE LÓGICA DE SKUs ---
+# --- 2. FUNCIONES DE APOYO Y LÓGICA DE SKU ---
+
+def obtener_config(tipo):
+    try:
+        res = supabase.table("configuracion").select("valor").eq("tipo", tipo).execute()
+        return sorted([r['valor'] for r in res.data]) if res.data else ["GENERAL"]
+    except:
+        return ["GENERAL"]
 
 def generar_sku(cat, sub):
     """Genera el siguiente SKU disponible para una combinación cat-sub."""
     prefijo = f"{cat[:3]}-{sub[:3]}".upper()
     try:
         res = supabase.table("productos").select("codigo").like("codigo", f"{prefijo}%").execute()
-        # Extraemos los números de secuencia existentes para evitar saltos
         codigos = [r['codigo'] for r in res.data]
         secuencias = []
         for c in codigos:
             try: secuencias.append(int(c.split('-')[-1]))
             except: continue
-        
         proximo = max(secuencias) + 1 if secuencias else 1
         return f"{prefijo}-{proximo:04d}"
     except:
         return f"{prefijo}-0001"
 
 def validar_duplicado(sku, id_actual=None):
-    """Verifica si un SKU ya existe (útil para ediciones manuales)."""
     query = supabase.table("productos").select("id").eq("codigo", sku.upper())
     if id_actual:
         query = query.neq("id", id_actual)
@@ -40,22 +44,19 @@ def validar_duplicado(sku, id_actual=None):
     return len(res.data) > 0
 
 def reestructurar_todos_los_codigos():
-    """⚠️ FUNCIÓN CRÍTICA: Reasigna códigos a TODA la base de datos desde 0001."""
+    """Reasigna códigos a TODA la base de datos desde 0001."""
     productos = supabase.table("productos").select("*").order("created_at").execute()
     if not productos.data: return
-    
-    contadores = {} # Diccionario para llevar la cuenta por grupo
-    
+    contadores = {}
     for p in productos.data:
         prefijo = f"{p['categoria'][:3]}-{p['subcategoria'][:3]}".upper()
         contadores[prefijo] = contadores.get(prefijo, 0) + 1
         nuevo_sku = f"{prefijo}-{contadores[prefijo]:04d}"
-        
-        # Actualizar en base de datos
         supabase.table("productos").update({"codigo": nuevo_sku}).eq("id", p['id']).execute()
 
-# --- 3. AUTENTICACIÓN Y SESIÓN ---
+# --- 3. AUTENTICACIÓN ---
 if "auth" not in st.session_state: st.session_state.auth = False
+if "carrito" not in st.session_state: st.session_state.carrito = []
 
 if not st.session_state.auth:
     st.title("🔐 Acceso")
@@ -69,84 +70,148 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# --- 4. MENÚ LATERAL ---
+# --- BARRA LATERAL ---
 with st.sidebar:
-    st.header(f"👤 {st.session_state.role.upper()}")
-    menu = st.radio("Navegación", ["Ventas", "Inventario", "Configuración", "Reportes"])
-    if st.button("Cerrar Sesión"):
+    st.markdown(f"**Usuario:** `{st.session_state.role.upper()}`")
+    menu = st.radio("Menú Principal", ["Ventas", "Inventario", "Configuración", "Reportes"] if st.session_state.role == "admin" else ["Ventas", "Inventario"])
+    if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
         st.session_state.auth = False
+        st.session_state.carrito = []
         st.rerun()
 
-# --- 5. SECCIÓN INVENTARIO (CON REORGANIZACIÓN) ---
-if menu == "Inventario":
-    st.header("📦 Gestión de Inventario")
-    cats = obtener_config("categoria") if 'obtener_config' in globals() else ["GENERAL"]
-    # (Asumiendo que tienes la función obtener_config del código anterior)
-    
-    # BOTÓN ESPECIAL DE MANTENIMIENTO (Solo Admin)
-    if st.session_state.role == "admin":
-        with st.expander("🛠️ Herramientas de Mantenimiento"):
-            st.warning("Esta acción renombrará TODOS los productos existentes basándose en su categoría actual y reiniciará las secuencias desde 0001.")
-            if st.button("♻️ REORGANIZAR TODOS LOS SKUs AHORA"):
-                with st.spinner("Procesando base de datos..."):
-                    reestructurar_todos_los_codigos()
-                st.success("¡Base de datos reorganizada con éxito!")
+# --- 4. SECCIÓN: VENTAS ---
+if menu == "Ventas":
+    st.header("💰 Nueva Venta")
+    res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
+    if res.data:
+        df_p = pd.DataFrame(res.data)
+        opciones = [f"{r['codigo']} - {r['nombre']}" for r in res.data]
+        sel_prod = st.selectbox("📦 Seleccionar Producto", opciones)
+        item = df_p[df_p['codigo'] == sel_prod.split(" - ")[0]].iloc[0]
+        
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            if item.get('foto_path'): st.image(item['foto_path'], width=250)
+            st.info(f"**Stock disponible:** {item['stock']}")
+        
+        with c2:
+            colores = [c.strip().upper() for c in item['colores'].split(',') if c.strip()] if item.get('colores') else ["ÚNICO"]
+            v_col = st.selectbox("🎨 Color", colores)
+            v_cant = st.number_input("Cantidad", 1, int(item['stock']))
+            v_pre = st.number_input("Precio Venta", value=float(item['precio_pub']))
+            if st.button("➕ Añadir al Carrito"):
+                st.session_state.carrito.append({
+                    "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
+                    "color": v_col, "cantidad": v_cant, "precio": v_pre, 
+                    "precio_inv": item['precio_inv'], "foto": item.get('foto_path')
+                })
+                st.toast("Añadido")
+
+        if st.session_state.carrito:
+            st.divider()
+            st.subheader("🛒 Carrito")
+            total_v = 0
+            for i, p in enumerate(st.session_state.carrito):
+                st.write(f"{p['nombre']} ({p['color']}) x{p['cantidad']} - **${p['precio']*p['cantidad']:,.2f}**")
+                total_v += p['precio']*p['cantidad']
+            
+            v_vend = st.text_input("Vendedor", key="vendedor_input")
+            if st.button("🚀 FINALIZAR VENTA", type="primary") and v_vend:
+                for p in st.session_state.carrito:
+                    stk_actual = supabase.table("productos").select("stock").eq("id", p['id']).execute().data[0]['stock']
+                    supabase.table("productos").update({"stock": stk_actual - p['cantidad']}).eq("id", p['id']).execute()
+                    supabase.table("ventas").insert({
+                        "producto": p['nombre'], "codigo_prod": p['codigo'], "color": p['color'],
+                        "cantidad": p['cantidad'], "precio_total": p['precio']*p['cantidad'],
+                        "vendedor": v_vend, "ganancia": (p['precio'] - p['precio_inv']) * p['cantidad'],
+                        "foto_path": p['foto'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()
+                    }).execute()
+                st.session_state.carrito = []
+                st.success("Venta realizada")
                 st.rerun()
 
-    tab1, tab2 = st.tabs(["📋 Lista y Edición", "🆕 Nuevo Producto"])
+# --- 5. SECCIÓN: INVENTARIO ---
+elif menu == "Inventario":
+    st.header("📦 Gestión de Inventario")
+    cats = obtener_config("categoria")
+    subs = obtener_config("subcategoria")
+    
+    if st.session_state.role == "admin":
+        with st.expander("🛠️ Herramientas Críticas"):
+            if st.button("♻️ REORGANIZAR TODOS LOS CÓDIGOS (RESET SECUENCIA)"):
+                reestructurar_todos_los_codigos()
+                st.success("Códigos reordenados")
+                st.rerun()
 
+    tab1, tab2 = st.tabs(["📋 Lista y Edición", "🆕 Agregar Nuevo"])
+    
     with tab1:
         res = supabase.table("productos").select("*").order("codigo").execute()
-        df = pd.DataFrame(res.data) if res.data else pd.DataFrame()
-        
-        if not df.empty:
-            st.subheader("📝 Editar Producto")
-            opciones = [f"{r['codigo']} | {r['nombre']}" for r in res.data]
-            seleccion = st.selectbox("Buscar producto:", ["-- Seleccionar --"] + opciones)
-            
-            if seleccion != "-- Seleccionar --":
-                cod_actual = seleccion.split(" | ")[0]
-                item = df[df['codigo'] == cod_actual].iloc[0]
-                
-                # Formulario dinámico
-                with st.form(f"edit_{item['id']}"):
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        new_nom = st.text_input("Nombre", value=item['nombre'])
-                        new_cat = st.selectbox("Categoría", cats, index=cats.index(item['categoria']) if item['categoria'] in cats else 0)
-                        new_sub = st.text_input("Subcategoría", value=item['subcategoria']) # O selectbox si prefieres
-                    
-                    with col2:
-                        # LOGICA DE CAMBIO DE CÓDIGO EN TIEMPO REAL
-                        if new_cat != item['categoria']:
-                            sugerencia = generar_sku(new_cat, new_sub)
-                            st.info(f"Sugerencia por cambio de categoría: **{sugerencia}**")
-                            new_cod = st.text_input("Código SKU", value=sugerencia)
-                        else:
-                            new_cod = st.text_input("Código SKU", value=item['codigo'])
+        if res.data:
+            df_i = pd.DataFrame(res.data)
+            if st.session_state.role == "admin":
+                sel = st.selectbox("Editar producto:", ["-- Seleccionar --"] + [f"{r['codigo']} - {r['nombre']}" for r in res.data])
+                if sel != "-- Seleccionar --":
+                    it = df_i[df_i['codigo'] == sel.split(" - ")[0]].iloc[0]
+                    with st.expander("Formulario de Edición", expanded=True):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            e_nom = st.text_input("Nombre", value=it['nombre'], key=f"n_{it['id']}")
+                            e_cat = st.selectbox("Categoría", cats, index=cats.index(it['categoria']) if it['categoria'] in cats else 0, key=f"c_{it['id']}")
+                            e_sub = st.selectbox("Subcategoría", subs, index=subs.index(it['subcategoria']) if it['subcategoria'] in subs else 0, key=f"s_{it['id']}")
+                        with c2:
+                            # Lógica reactiva de SKU en edición
+                            val_sku = generar_sku(e_cat, e_sub) if (e_cat != it['categoria'] or e_sub != it['subcategoria']) else it['codigo']
+                            e_cod = st.text_input("Código SKU", value=val_sku, key=f"k_{it['id']}")
+                            e_stk = st.number_input("Stock", value=int(it['stock']), key=f"st_{it['id']}")
+                            e_pub = st.number_input("Precio", value=float(it['precio_pub']), key=f"p_{it['id']}")
                         
-                        new_stk = st.number_input("Stock", value=int(item['stock']))
-                        new_pub = st.number_input("Precio", value=float(item['precio_pub']))
-
-                    # Validar si el código ya existe
-                    duplicado = validar_duplicado(new_cod, item['id'])
-                    if duplicado: st.error("⚠️ Este código ya pertenece a otro producto.")
-
-                    if st.form_submit_button("Guardar Cambios") and not duplicado:
-                        supabase.table("productos").update({
-                            "nombre": new_nom, "codigo": new_cod.upper(),
-                            "categoria": new_cat, "subcategoria": new_sub,
-                            "stock": new_stk, "precio_pub": new_pub
-                        }).eq("id", item['id']).execute()
-                        st.success("Actualizado")
-                        st.rerun()
-
-            st.divider()
-            st.dataframe(df, use_container_width=True)
+                        if st.button("💾 Guardar Cambios", key=f"b_{it['id']}"):
+                            supabase.table("productos").update({"codigo": e_cod.upper(), "nombre": e_nom, "categoria": e_cat, "subcategoria": e_sub, "stock": e_stk, "precio_pub": e_pub}).eq("id", it['id']).execute()
+                            st.rerun()
+            st.dataframe(df_i, use_container_width=True)
 
     with tab2:
-        st.subheader("Registrar producto con SKU automático")
-        # Aquí iría el formulario de "Nuevo Producto" similar al que ya tienes, 
-        # usando la función generar_sku(n_cat, n_sub) para el valor default del campo código.
+        with st.form("nuevo_p"):
+            n_cat = st.selectbox("Categoría", cats)
+            n_sub = st.selectbox("Subcategoría", subs)
+            sku_auto = generar_sku(n_cat, n_sub)
+            n_cod = st.text_input("Código", value=sku_auto)
+            n_nom = st.text_input("Nombre")
+            n_inv = st.number_input("Costo Inversión", 0.0)
+            n_pub = st.number_input("Precio Venta", 0.0)
+            n_stk = st.number_input("Stock Inicial", 1)
+            foto = st.file_uploader("Foto", type=['jpg','png','jpeg'])
+            if st.form_submit_button("🚀 Registrar"):
+                if n_nom and foto:
+                    fname = f"{n_cod}.jpg"
+                    supabase.storage.from_("fotos").upload(fname, foto.getvalue())
+                    url = supabase.storage.from_("fotos").get_public_url(fname)
+                    supabase.table("productos").insert({"codigo": n_cod.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub, "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url}).execute()
+                    st.rerun()
 
-# --- (El resto de las secciones: Ventas, Config, Reportes se mantienen igual) ---
+# --- 6. SECCIÓN: CONFIGURACIÓN ---
+elif menu == "Configuración":
+    st.header("⚙️ Configuración")
+    t = st.radio("Editar:", ["Categorías", "Subcategorías"], horizontal=True)
+    db_t = "categoria" if t == "Categorías" else "subcategoria"
+    n_v = st.text_input("Nuevo valor").upper()
+    if st.button("➕ Añadir") and n_v:
+        supabase.table("configuracion").insert({"tipo": db_t, "valor": n_v}).execute(); st.rerun()
+    res = supabase.table("configuracion").select("*").eq("tipo", db_t).execute()
+    for r in res.data:
+        c1, c2 = st.columns([5,1])
+        c1.write(r['valor'])
+        if c2.button("🗑️", key=r['id']):
+            supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
+
+# --- 7. SECCIÓN: REPORTES ---
+elif menu == "Reportes":
+    st.header("📊 Reportes")
+    res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
+    if res_v.data:
+        df_r = pd.DataFrame(res_v.data)
+        st.metric("Total Ingresos", f"${df_r['precio_total'].sum():,.2f}")
+        st.dataframe(df_r, use_container_width=True)
+    else:
+        st.info("No hay ventas registradas.")

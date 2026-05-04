@@ -36,7 +36,7 @@ def generar_sku(cat, sub):
     except:
         return f"{prefijo}-0001"
 
-# --- 3. SESIÓN ---
+# --- 3. MANEJO DE SESIÓN ---
 if "auth" not in st.session_state: st.session_state.auth = False
 if "carrito" not in st.session_state: st.session_state.carrito = []
 
@@ -50,15 +50,16 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-# --- 5. INTERFAZ ---
+# --- 5. INTERFAZ PRINCIPAL ---
 with st.sidebar:
     st.title("⚖️ TUMULTOFLOW")
-    menu = st.radio("Menú", ["Ventas", "Inventario", "Configuración", "Reportes"])
-    if st.button("Cerrar Sesión"):
+    st.markdown(f"**Usuario:** `{st.session_state.role.upper()}`")
+    menu = st.radio("Navegación", ["Ventas", "Inventario", "Configuración", "Reportes"])
+    if st.button("Cerrar Sesión", use_container_width=True):
         st.session_state.auth = False
         st.rerun()
 
-# --- VENTAS ---
+# --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
@@ -71,30 +72,31 @@ if menu == "Ventas":
         c1, c2 = st.columns([1, 2])
         with c1:
             if item.get('foto_path'): st.image(item['foto_path'], width=250)
-            st.info(f"**Stock:** {item['stock']}")
+            st.info(f"**Disponibles:** {item['stock']}")
         with c2:
             st.subheader(item['nombre'])
-            st.caption(item.get('descripcion', 'Sin descripción'))
-            v_col = st.selectbox("🎨 Color", [c.strip().upper() for c in item['colores'].split(',') if c.strip()] if item.get('colores') else ["ÚNICO"])
+            st.caption(f"📝 {item.get('descripcion', 'Sin descripción')}")
+            colores = [c.strip().upper() for c in item['colores'].split(',') if c.strip()] if item.get('colores') else ["ÚNICO"]
+            v_col = st.selectbox("🎨 Color", colores)
             v_cant = st.number_input("Cantidad", 1, int(item['stock']))
-            v_pre = st.number_input("Precio", value=float(item['precio_pub']))
-            if st.button("➕ Añadir"):
+            v_pre = st.number_input("Precio de Venta", value=float(item['precio_pub']))
+            if st.button("➕ Añadir al Carrito", use_container_width=True):
                 st.session_state.carrito.append({
                     "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
                     "color": v_col, "cantidad": v_cant, "precio": v_pre, 
                     "precio_inv": item['precio_inv'], "foto": item.get('foto_path')
                 })
-                st.rerun()
+                st.toast("Producto añadido")
 
         if st.session_state.carrito:
             st.divider()
             total_v = sum(p['precio'] * p['cantidad'] for p in st.session_state.carrito)
-            st.markdown(f"### Total: ${total_v:,.2f}")
+            st.subheader(f"Total a Pagar: ${total_v:,.2f}")
             v_vend = st.text_input("Vendedor")
-            if st.button("🚀 FINALIZAR VENTA", type="primary") and v_vend:
+            if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True) and v_vend:
                 for p in st.session_state.carrito:
-                    stk = supabase.table("productos").select("stock").eq("id", p['id']).execute().data[0]['stock']
-                    supabase.table("productos").update({"stock": stk - p['cantidad']}).eq("id", p['id']).execute()
+                    stk_db = supabase.table("productos").select("stock").eq("id", p['id']).execute().data[0]['stock']
+                    supabase.table("productos").update({"stock": stk_db - p['cantidad']}).eq("id", p['id']).execute()
                     supabase.table("ventas").insert({
                         "producto": p['nombre'], "codigo_prod": p['codigo'], "color": p['color'],
                         "cantidad": p['cantidad'], "precio_total": p['precio']*p['cantidad'],
@@ -102,37 +104,33 @@ if menu == "Ventas":
                         "foto_path": p['foto']
                     }).execute()
                 st.session_state.carrito = []
+                st.success("¡Venta completada!")
                 st.rerun()
 
-# --- INVENTARIO ---
+# --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
-    st.header("📦 Inventario")
+    st.header("📦 Gestión de Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
-    t1, t2 = st.tabs(["📋 Catálogo", "🆕 Nuevo Producto"])
+    tab1, tab2 = st.tabs(["📋 Ver y Editar", "🆕 Nuevo Producto"])
     
-    with t1:
+    with tab1:
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
-            sel_edit = st.selectbox("Editar producto:", ["-- Seleccionar --"] + [f"{r['codigo']} - {r['nombre']}" for r in res.data])
+            sel_edit = st.selectbox("Selecciona para modificar:", ["-- Seleccionar --"] + [f"{r['codigo']} - {r['nombre']}" for r in res.data])
             
             if sel_edit != "-- Seleccionar --":
                 it_e = df_i[df_i['codigo'] == sel_edit.split(" - ")[0]].iloc[0]
-                with st.expander("✏️ Modificar Producto", expanded=True):
-                    # --- SECCIÓN DE IMAGEN EN EDICIÓN ---
+                with st.expander("✏️ Editar Información y Foto", expanded=True):
+                    # Edición de Foto
                     c_img1, c_img2 = st.columns([1, 2])
                     with c_img1:
-                        st.markdown("**Imagen Actual:**")
-                        if it_e.get('foto_path'):
-                            st.image(it_e['foto_path'], width=150)
-                        else:
-                            st.write("Sin imagen")
+                        st.write("**Actual:**")
+                        if it_e.get('foto_path'): st.image(it_e['foto_path'], width=150)
                     with c_img2:
-                        nueva_foto = st.file_uploader("🖼️ Cambiar Imagen (Opcional)", type=['jpg','png','jpeg'], key="edit_foto")
+                        nueva_foto = st.file_uploader("🖼️ Cambiar Imagen", type=['jpg','png','jpeg'])
                     
-                    st.divider()
                     e_desc = st.text_area("Descripción", value=it_e.get('descripcion', ''))
-                    
                     c1, c2 = st.columns(2)
                     with c1:
                         e_nom = st.text_input("Nombre", value=it_e['nombre'])
@@ -140,38 +138,35 @@ elif menu == "Inventario":
                         e_sub = st.selectbox("Subcategoría", subs, index=subs.index(it_e['subcategoria']) if it_e['subcategoria'] in subs else 0)
                         e_col = st.text_input("Colores", value=it_e['colores'])
                     with c2:
-                        sku_val = generar_sku(e_cat, e_sub) if (e_cat != it_e['categoria'] or e_sub != it_e['subcategoria']) else it_e['codigo']
-                        e_cod = st.text_input("SKU", value=sku_val)
+                        sku_sug = generar_sku(e_cat, e_sub) if (e_cat != it_e['categoria'] or e_sub != it_e['subcategoria']) else it_e['codigo']
+                        e_cod = st.text_input("Código SKU", value=sku_sug)
                         e_inv = st.number_input("Costo", value=float(it_e['precio_inv']))
                         e_pub = st.number_input("Venta", value=float(it_e['precio_pub']))
                         e_stk = st.number_input("Stock", value=int(it_e['stock']))
                     
-                    b1, b2 = st.columns(2)
-                    if b1.button("💾 GUARDAR CAMBIOS", use_container_width=True):
-                        # Lógica para subir nueva foto si existe
-                        url_foto = it_e['foto_path']
+                    b_col1, b_col2 = st.columns(2)
+                    if b_col1.button("💾 Guardar Cambios", use_container_width=True):
+                        url_f = it_e['foto_path']
                         if nueva_foto:
-                            fname = f"{e_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
-                            supabase.storage.from_("fotos").upload(fname, nueva_foto.getvalue())
-                            url_foto = supabase.storage.from_("fotos").get_public_url(fname)
+                            fn = f"{e_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
+                            supabase.storage.from_("fotos").upload(fn, nueva_foto.getvalue())
+                            url_f = supabase.storage.from_("fotos").get_public_url(fn)
                         
                         supabase.table("productos").update({
                             "nombre": e_nom, "codigo": e_cod.upper(), "categoria": e_cat,
                             "subcategoria": e_sub, "colores": e_col, "precio_inv": e_inv,
-                            "precio_pub": e_pub, "stock": e_stk, "descripcion": e_desc,
-                            "foto_path": url_foto
+                            "precio_pub": e_pub, "stock": e_stk, "descripcion": e_desc, "foto_path": url_f
                         }).eq("id", it_e['id']).execute()
-                        st.success("¡Producto actualizado!")
                         st.rerun()
                     
-                    if b2.button("🗑️ ELIMINAR", type="primary", use_container_width=True):
+                    if b_col2.button("🗑️ ELIMINAR PRODUCTO", type="primary", use_container_width=True):
                         supabase.table("productos").delete().eq("id", it_e['id']).execute()
                         st.rerun()
 
             st.divider()
             st.dataframe(df_i, column_config={"foto_path": st.column_config.ImageColumn("Foto")}, use_container_width=True)
 
-    with t2:
+    with tab2:
         with st.form("nuevo_p"):
             n_nom = st.text_input("Nombre")
             n_desc = st.text_area("Descripción")
@@ -179,32 +174,32 @@ elif menu == "Inventario":
             with c1:
                 n_cat = st.selectbox("Categoría", cats)
                 n_sub = st.selectbox("Subcategoría", subs)
-                n_cod = st.text_input("SKU Sugerido", value=generar_sku(n_cat, n_sub))
+                n_cod = st.text_input("SKU", value=generar_sku(n_cat, n_sub))
                 n_col = st.text_input("Colores")
             with c2:
                 n_inv = st.number_input("Costo", 0.0)
                 n_pub = st.number_input("Venta", 0.0)
                 n_stk = st.number_input("Stock Inicial", 1)
-                n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'])
+                n_foto = st.file_uploader("Subir Imagen", type=['jpg','png','jpeg'])
             
-            if st.form_submit_button("🚀 REGISTRAR"):
+            if st.form_submit_button("🚀 REGISTRAR PRODUCTO", use_container_width=True):
                 if n_nom and n_foto:
                     fname = f"{n_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
                     supabase.storage.from_("fotos").upload(fname, n_foto.getvalue())
                     url = supabase.storage.from_("fotos").get_public_url(fname)
                     supabase.table("productos").insert({
-                        "codigo": n_cod.upper(), "nombre": n_nom, "descripcion": n_desc, 
-                        "categoria": n_cat, "subcategoria": n_sub, "colores": n_col, 
-                        "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
+                        "codigo": n_cod.upper(), "nombre": n_nom, "descripcion": n_desc, "categoria": n_cat, 
+                        "subcategoria": n_sub, "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, 
+                        "stock": n_stk, "foto_path": url
                     }).execute()
                     st.rerun()
 
-# --- RESTO DEL CÓDIGO (Configuración y Reportes) ---
+# --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración":
     st.header("⚙️ Configuración")
     tipo = st.radio("Gestionar:", ["Categorías", "Subcategorías"], horizontal=True)
     db_col = "categoria" if tipo == "Categorías" else "subcategoria"
-    val = st.text_input(f"Añadir {tipo}").upper()
+    val = st.text_input(f"Nuevo {tipo}").upper()
     if st.button("➕ Agregar") and val:
         supabase.table("configuracion").insert({"tipo": db_col, "valor": val}).execute(); st.rerun()
     res = supabase.table("configuracion").select("*").eq("tipo", db_col).execute()
@@ -214,10 +209,27 @@ elif menu == "Configuración":
         if b.button("🗑️", key=r['id']):
             supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
+# --- SECCIÓN: REPORTES ---
 elif menu == "Reportes":
-    st.header("📊 Reportes")
+    st.header("📊 Reportes de Ventas")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     if res_v.data:
         df_r = pd.DataFrame(res_v.data)
-        st.metric("Total Ventas", f"${df_r['precio_total'].sum():,.2f}")
-        st.dataframe(df_r, column_config={"foto_path": st.column_config.ImageColumn("Foto")}, use_container_width=True)
+        df_r['precio_total'] = pd.to_numeric(df_r['precio_total'], errors='coerce').fillna(0)
+        df_r['ganancia'] = pd.to_numeric(df_r['ganancia'], errors='coerce').fillna(0)
+        
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Ventas Totales", f"${df_r['precio_total'].sum():,.2f}")
+        m2.metric("Ganancia Neta", f"${df_r['ganancia'].sum():,.2f}")
+        m3.metric("Productos Vendidos", f"{int(df_r['cantidad'].sum())} pzs")
+        
+        st.divider()
+        st.dataframe(
+            df_r, 
+            column_config={
+                "foto_path": st.column_config.ImageColumn("Foto"),
+                "precio_total": st.column_config.NumberColumn("Venta", format="$%.2f"),
+                "ganancia": st.column_config.NumberColumn("Ganancia", format="$%.2f")
+            }, 
+            use_container_width=True
+        )

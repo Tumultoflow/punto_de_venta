@@ -24,7 +24,6 @@ def generar_sku(cat, sub):
     """Genera un SKU basado en el conteo actual de esa categoría/subcategoría"""
     prefijo = f"{cat[:3]}-{sub[:3]}".upper()
     try:
-        # Buscamos productos que empiecen con ese prefijo para contar la secuencia
         res = supabase.table("productos").select("codigo").like("codigo", f"{prefijo}%").execute()
         conteo = len(res.data) + 1
         return f"{prefijo}-{conteo:04d}"
@@ -145,8 +144,10 @@ elif menu == "Inventario":
                 p_edit_raw = st.selectbox("Selecciona un producto para modificar:", ["-- Seleccionar --"] + lista_editar)
                 
                 if p_edit_raw != "-- Seleccionar --":
-                    cod_sel = p_edit_raw.split(" - ")[0]
-                    it_edit = df_i[df_i['codigo'] == cod_sel].iloc[0]
+                    cod_original = p_edit_raw.split(" - ")[0]
+                    it_edit = df_i[df_i['codigo'] == cod_original].iloc[0]
+                    
+                    # Usamos una key única para que el formulario cambie al seleccionar otro producto
                     ID_K = it_edit['codigo'] 
                     
                     with st.expander("📝 Formulario de Edición", expanded=True):
@@ -154,15 +155,26 @@ elif menu == "Inventario":
                         with e_c1:
                             idx_cat = cats.index(it_edit['categoria']) if it_edit['categoria'] in cats else 0
                             idx_sub = subs.index(it_edit['subcategoria']) if it_edit['subcategoria'] in subs else 0
+                            
                             e_nom = st.text_input("Nombre", value=it_edit['nombre'], key=f"nom_{ID_K}")
                             e_cat = st.selectbox("Categoría", cats, index=idx_cat, key=f"cat_{ID_K}")
                             e_sub = st.selectbox("Subcategoría", subs, index=idx_sub, key=f"sub_{ID_K}")
                             e_col = st.text_input("Colores", value=it_edit.get('colores', ''), key=f"col_{ID_K}")
+                        
                         with e_c2:
+                            # Lógica de cambio de código en tiempo real al editar
+                            # Si la categoría o subcategoría cambian respecto a la original, sugerimos nuevo código
+                            if e_cat != it_edit['categoria'] or e_sub != it_edit['subcategoria']:
+                                sugerencia_edit = generar_sku(e_cat, e_sub)
+                                st.warning(f"⚠️ Cambio detectado. Nuevo código sugerido: {sugerencia_edit}")
+                                val_cod_edit = sugerencia_edit
+                            else:
+                                val_cod_edit = it_edit['codigo']
+
+                            e_cod = st.text_input("Código SKU", value=val_cod_edit, key=f"sku_{ID_K}")
                             e_inv = st.number_input("Costo (Inversión)", value=float(it_edit['precio_inv']), key=f"inv_{ID_K}")
                             e_pub = st.number_input("Precio Público", value=float(it_edit['precio_pub']), key=f"pub_{ID_K}")
                             e_stk = st.number_input("Stock Actual", value=int(it_edit['stock']), key=f"stk_{ID_K}")
-                            e_cod = st.text_input("Código SKU", value=it_edit['codigo'], key=f"sku_{ID_K}")
                         
                         eb1, eb2 = st.columns(2)
                         if eb1.button("💾 Guardar Cambios", use_container_width=True):
@@ -171,8 +183,9 @@ elif menu == "Inventario":
                                 "subcategoria": e_sub, "colores": e_col, "precio_inv": e_inv, 
                                 "precio_pub": e_pub, "stock": e_stk
                             }).eq("id", it_edit['id']).execute()
-                            st.success("Cambios aplicados")
+                            st.success("Cambios aplicados correctamente")
                             st.rerun()
+                            
                         if eb2.button("🗑️ ELIMINAR TOTALMENTE", type="primary", use_container_width=True):
                             supabase.table("productos").delete().eq("id", it_edit['id']).execute()
                             st.warning("Producto eliminado")
@@ -186,19 +199,18 @@ elif menu == "Inventario":
             st.subheader("🆕 Registrar Nuevo")
             c1, c2 = st.columns(2)
             with c1:
-                n_cat = st.selectbox("1. Seleccionar Categoría", cats, key="nw_cat")
-                n_sub = st.selectbox("2. Seleccionar Subcategoría", subs, key="nw_sub")
+                n_cat = st.selectbox("Categoría", cats, key="nw_cat")
+                n_sub = st.selectbox("Subcategoría", subs, key="nw_sub")
                 
-                # GENERACIÓN DE SKU EN TIEMPO REAL
-                sku_generado = generar_sku(n_cat, n_sub)
-                st.info(f"✨ Código sugerido: **{sku_generado}**")
+                # Generación automática del código en tiempo real
+                sku_autogen = generar_sku(n_cat, n_sub)
+                n_cod = st.text_input("Código SKU (Autogenerado)", value=sku_autogen)
                 
-                n_cod = st.text_input("3. Confirmar Código SKU", value=sku_generado)
-                n_nom = st.text_input("4. Nombre del Producto*")
-                n_col = st.text_input("5. Colores (Rojo, Azul, etc)")
-                n_inv = st.number_input("6. Precio Inversión", 0.0)
-                n_pub = st.number_input("7. Precio Público", 0.0)
-                n_stk = st.number_input("8. Stock Inicial", 1)
+                n_nom = st.text_input("Nombre del Producto*")
+                n_col = st.text_input("Colores (Rojo, Azul, etc)")
+                n_inv = st.number_input("Precio Inversión", 0.0)
+                n_pub = st.number_input("Precio Público", 0.0)
+                n_stk = st.number_input("Stock Inicial", 1)
             with c2:
                 st.write("🖼️ Imagen del Producto")
                 foto = st.file_uploader("Subir foto o capturar", type=['jpg', 'png', 'jpeg'])
@@ -214,7 +226,7 @@ elif menu == "Inventario":
                             "codigo": n_cod.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
                             "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
                         }).execute()
-                        st.success(f"¡Producto {n_cod} guardado exitosamente!")
+                        st.success(f"Producto {n_cod} creado")
                         st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
 
@@ -263,8 +275,5 @@ elif menu == "Reportes":
             }, 
             hide_index=True, use_container_width=True
         )
-        st.divider()
-        st.subheader("📈 Tendencia")
-        st.line_chart(df_r.groupby(df_r['fecha_venta'].dt.date)['precio_total'].sum())
     else:
-        st.info("Sin registros de ventas.")
+        st.info("Sin ventas aún.")

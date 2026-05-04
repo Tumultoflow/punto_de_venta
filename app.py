@@ -43,6 +43,7 @@ with st.sidebar:
     menu = st.radio("Menú Principal", ["Ventas", "Inventario", "Configuración", "Reportes"] if st.session_state.role == "admin" else ["Ventas", "Inventario"])
     if st.button("🚪 CERRAR SESIÓN", use_container_width=True):
         st.session_state.auth = False
+        st.session_state.carrito = [] # Limpiar carrito al salir
         st.rerun()
 
 # --- 5. SECCIÓN: VENTAS ---
@@ -66,10 +67,10 @@ if menu == "Ventas":
             v_cant = st.number_input("Cantidad", 1, int(item['stock']))
             v_pre = st.number_input("Precio Venta", value=float(item['precio_pub']))
             if st.button("➕ Añadir al Carrito"):
-                # Generamos un ID temporal para poder borrarlo individualmente
+                # ID único basado en tiempo exacto para evitar KeyErrors
                 id_temp = datetime.now().timestamp()
                 st.session_state.carrito.append({
-                    "temp_id": id_temp,
+                    "temp_id": str(id_temp),
                     "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
                     "color": v_col, "cantidad": v_cant, "precio": v_pre, 
                     "precio_inv": item['precio_inv'], "foto": item.get('foto_path')
@@ -80,24 +81,27 @@ if menu == "Ventas":
             st.divider()
             st.subheader("🛒 Carrito de Compra")
             
-            # --- LISTA INTERACTIVA DEL CARRITO ---
             total_venta = 0
+            # Usamos una copia de la lista para iterar y poder borrar sin errores de índice
             for i, p in enumerate(st.session_state.carrito):
                 col_item, col_del = st.columns([6, 1])
                 subtotal = p['cantidad'] * p['precio']
                 total_venta += subtotal
                 
+                # Obtener ID con seguridad
+                t_id = p.get('temp_id', f"old_{i}")
+                
                 with col_item:
                     st.write(f"**{p['codigo']}** - {p['nombre']} ({p['color']}) | {p['cantidad']} pzs x ${p['precio']:,.2f} = **${subtotal:,.2f}**")
                 
                 with col_del:
-                    if st.button("🗑️", key=f"del_{p['temp_id']}"):
+                    if st.button("🗑️", key=f"del_{t_id}"):
                         st.session_state.carrito.pop(i)
                         st.rerun()
             
             st.markdown(f"### **Total a Pagar: ${total_venta:,.2f}**")
             
-            v_vend = st.text_input("Vendedor", key="vendedor_input")
+            v_vend = st.text_input("Vendedor")
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
                 if v_vend:
                     for p in st.session_state.carrito:
@@ -111,10 +115,8 @@ if menu == "Ventas":
                             "foto_path": p['foto'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()
                         }).execute()
                     st.session_state.carrito = []
-                    st.success("Venta realizada con éxito")
+                    st.success("Venta realizada")
                     st.rerun()
-                else:
-                    st.error("Por favor ingresa el nombre del vendedor.")
 
 # --- 6. SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
@@ -151,6 +153,7 @@ elif menu == "Inventario":
                             e_pub = st.number_input("Público", value=float(it_edit['precio_pub']), key="ed_pub")
                             e_stk = st.number_input("Stock", value=int(it_edit['stock']), key="ed_stk")
                             
+                            # Auto-generación de SKU sugerido
                             sugerencia_sku = f"{e_cat[:3]}-{e_sub[:3]}-{it_edit['codigo'].split('-')[-1]}".upper()
                             e_cod = st.text_input("Código SKU (Auto-generado)", value=sugerencia_sku, key="ed_sku")
                         

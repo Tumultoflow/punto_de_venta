@@ -20,6 +20,17 @@ def obtener_config(tipo):
     except:
         return ["GENERAL"]
 
+def generar_sku(cat, sub):
+    """Genera un SKU basado en el conteo actual de esa categoría/subcategoría"""
+    prefijo = f"{cat[:3]}-{sub[:3]}".upper()
+    try:
+        # Buscamos productos que empiecen con ese prefijo para contar la secuencia
+        res = supabase.table("productos").select("codigo").like("codigo", f"{prefijo}%").execute()
+        conteo = len(res.data) + 1
+        return f"{prefijo}-{conteo:04d}"
+    except:
+        return f"{prefijo}-0001"
+
 # --- 3. ESTADO DE LA SESIÓN ---
 if "auth" not in st.session_state: st.session_state.auth = False
 if "carrito" not in st.session_state: st.session_state.carrito = []
@@ -136,7 +147,6 @@ elif menu == "Inventario":
                 if p_edit_raw != "-- Seleccionar --":
                     cod_sel = p_edit_raw.split(" - ")[0]
                     it_edit = df_i[df_i['codigo'] == cod_sel].iloc[0]
-                    # KEY DINÁMICA para que el formulario se refresque al cambiar de producto
                     ID_K = it_edit['codigo'] 
                     
                     with st.expander("📝 Formulario de Edición", expanded=True):
@@ -176,32 +186,35 @@ elif menu == "Inventario":
             st.subheader("🆕 Registrar Nuevo")
             c1, c2 = st.columns(2)
             with c1:
-                n_nom = st.text_input("Nombre*")
-                n_cat = st.selectbox("Categoría", cats, key="nw_cat")
-                n_sub = st.selectbox("Subcategoría", subs, key="nw_sub")
-                n_col = st.text_input("Colores (Rojo, Azul, etc)")
-                n_inv = st.number_input("Precio Inversión", 0.0)
-                n_pub = st.number_input("Precio Público", 0.0)
-                n_stk = st.number_input("Stock Inicial", 1)
+                n_cat = st.selectbox("1. Seleccionar Categoría", cats, key="nw_cat")
+                n_sub = st.selectbox("2. Seleccionar Subcategoría", subs, key="nw_sub")
+                
+                # GENERACIÓN DE SKU EN TIEMPO REAL
+                sku_generado = generar_sku(n_cat, n_sub)
+                st.info(f"✨ Código sugerido: **{sku_generado}**")
+                
+                n_cod = st.text_input("3. Confirmar Código SKU", value=sku_generado)
+                n_nom = st.text_input("4. Nombre del Producto*")
+                n_col = st.text_input("5. Colores (Rojo, Azul, etc)")
+                n_inv = st.number_input("6. Precio Inversión", 0.0)
+                n_pub = st.number_input("7. Precio Público", 0.0)
+                n_stk = st.number_input("8. Stock Inicial", 1)
             with c2:
                 st.write("🖼️ Imagen del Producto")
-                # FILE UPLOADER: Permite cámara en móvil o archivos en PC
                 foto = st.file_uploader("Subir foto o capturar", type=['jpg', 'png', 'jpeg'])
                 if foto: st.image(foto, width=200)
             
             if st.button("🚀 REGISTRAR PRODUCTO", type="primary", use_container_width=True):
-                if n_nom and foto:
+                if n_nom and foto and n_cod:
                     try:
-                        exist = supabase.table("productos").select("codigo").execute()
-                        sku = f"{n_cat[:3]}-{n_sub[:3]}-{len(exist.data)+1:04d}".upper()
-                        fname = f"{sku}_{datetime.now().strftime('%H%M%S')}.jpg"
+                        fname = f"{n_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
                         supabase.storage.from_("fotos").upload(fname, foto.getvalue())
                         url = supabase.storage.from_("fotos").get_public_url(fname)
                         supabase.table("productos").insert({
-                            "codigo": sku, "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
+                            "codigo": n_cod.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
                             "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
                         }).execute()
-                        st.success(f"Producto {sku} creado")
+                        st.success(f"¡Producto {n_cod} guardado exitosamente!")
                         st.rerun()
                     except Exception as e: st.error(f"Error: {e}")
 

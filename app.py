@@ -117,34 +117,75 @@ if menu == "Ventas":
 
 # --- 6. SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
-    st.header("📦 Inventario")
+    st.header("📦 Gestión de Inventario")
     cats = obtener_config("categoria")
     subs = obtener_config("subcategoria")
-    tab1, tab2 = st.tabs(["📋 Lista de Productos", "🆕 Agregar Nuevo"])
+    
+    tab1, tab2 = st.tabs(["📋 Existencias y Edición", "🆕 Agregar Nuevo Producto"])
     
     with tab1:
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
+            
+            # --- PANEL DE EDICIÓN RESTAURADO ---
+            if st.session_state.role == "admin":
+                st.subheader("🛠️ Editar o Eliminar Producto")
+                lista_editar = [f"{r['codigo']} - {r['nombre']}" for r in res.data]
+                p_edit_raw = st.selectbox("Selecciona un producto para modificar:", ["-- Seleccionar --"] + lista_editar)
+                
+                if p_edit_raw != "-- Seleccionar --":
+                    it_edit = df_i[df_i['codigo'] == p_edit_raw.split(" - ")[0]].iloc[0]
+                    with st.expander("📝 Formulario de Edición", expanded=True):
+                        e_c1, e_c2 = st.columns(2)
+                        with e_c1:
+                            idx_cat = cats.index(it_edit['categoria']) if it_edit['categoria'] in cats else 0
+                            idx_sub = subs.index(it_edit['subcategoria']) if it_edit['subcategoria'] in subs else 0
+                            e_nom = st.text_input("Nombre", value=it_edit['nombre'], key="ed_nom")
+                            e_cat = st.selectbox("Categoría", cats, index=idx_cat, key="ed_cat")
+                            e_sub = st.selectbox("Subcategoría", subs, index=idx_sub, key="ed_sub")
+                            e_col = st.text_input("Colores", value=it_edit.get('colores', ''), key="ed_col")
+                        with e_c2:
+                            e_inv = st.number_input("Costo (Inversión)", value=float(it_edit['precio_inv']), key="ed_inv")
+                            e_pub = st.number_input("Precio Público", value=float(it_edit['precio_pub']), key="ed_pub")
+                            e_stk = st.number_input("Stock Actual", value=int(it_edit['stock']), key="ed_stk")
+                            e_cod = st.text_input("Código SKU", value=it_edit['codigo'], key="ed_sku")
+                        
+                        eb1, eb2 = st.columns(2)
+                        if eb1.button("💾 Guardar Cambios", use_container_width=True):
+                            supabase.table("productos").update({
+                                "codigo": e_cod.upper(), "nombre": e_nom, "categoria": e_cat,
+                                "subcategoria": e_sub, "colores": e_col, "precio_inv": e_inv, 
+                                "precio_pub": e_pub, "stock": e_stk
+                            }).eq("id", it_edit['id']).execute()
+                            st.success("Cambios aplicados")
+                            st.rerun()
+                        if eb2.button("🗑️ ELIMINAR TOTALMENTE", type="primary", use_container_width=True):
+                            supabase.table("productos").delete().eq("id", it_edit['id']).execute()
+                            st.warning("Producto eliminado")
+                            st.rerun()
+                st.divider()
+
             st.data_editor(df_i, column_config={"foto_path": st.column_config.ImageColumn("Foto")}, hide_index=True, use_container_width=True)
 
     with tab2:
         if st.session_state.role == "admin":
+            st.subheader("🆕 Registrar Nuevo")
             c1, c2 = st.columns(2)
             with c1:
-                n_nom = st.text_input("Nombre*")
-                n_cat = st.selectbox("Categoría", cats)
-                n_sub = st.selectbox("Subcategoría", subs)
-                n_col = st.text_input("Colores (ej: Rojo, Azul)")
-                n_inv = st.number_input("Costo de Inversión", 0.0)
-                n_pub = st.number_input("Precio al Público", 0.0)
-                n_stk = st.number_input("Stock Inicial", 1)
+                n_nom = st.text_input("Nombre*", key="nw_nom")
+                n_cat = st.selectbox("Categoría", cats, key="nw_cat")
+                n_sub = st.selectbox("Subcategoría", subs, key="nw_sub")
+                n_col = st.text_input("Colores (separados por coma)", key="nw_col")
+                n_inv = st.number_input("Precio Inversión", 0.0, key="nw_inv")
+                n_pub = st.number_input("Precio Público", 0.0, key="nw_pub")
+                n_stk = st.number_input("Stock Inicial", 1, key="nw_stk")
             with c2:
-                st.write("🖼️ Imagen del Producto")
-                foto = st.file_uploader("Subir desde galería o cámara", type=['jpg', 'png', 'jpeg'])
+                st.write("🖼️ Imagen")
+                foto = st.file_uploader("Elegir de galería o cámara", type=['jpg', 'png', 'jpeg'], key="file_nw")
                 if foto: st.image(foto, width=200)
             
-            if st.button("🚀 REGISTRAR PRODUCTO", type="primary"):
+            if st.button("🚀 REGISTRAR PRODUCTO", type="primary", use_container_width=True):
                 if n_nom and foto:
                     try:
                         exist = supabase.table("productos").select("codigo").execute()
@@ -156,16 +197,16 @@ elif menu == "Inventario":
                             "codigo": sku, "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
                             "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
                         }).execute()
-                        st.success(f"Producto {sku} creado")
+                        st.success(f"Registrado como {sku}")
                         st.rerun()
-                    except Exception as e: st.error(f"Error: {e}")
+                    except Exception as e: st.error(f"Error al registrar: {e}")
 
 # --- 7. CONFIGURACIÓN ---
 elif menu == "Configuración":
-    st.header("⚙️ Configuración de Listas")
+    st.header("⚙️ Configuración")
     tipo = st.radio("Editar:", ["Categorías", "Subcategorías"], horizontal=True)
     t_db = "categoria" if tipo == "Categorías" else "subcategoria"
-    n_val = st.text_input(f"Nuevo {tipo}").upper()
+    n_val = st.text_input(f"Nuevo valor para {tipo}").upper()
     if st.button("➕ Agregar"):
         if n_val: supabase.table("configuracion").insert({"tipo": t_db, "valor": n_val}).execute(); st.rerun()
     res = supabase.table("configuracion").select("*").eq("tipo", t_db).execute()
@@ -175,27 +216,25 @@ elif menu == "Configuración":
         if col_b.button("🗑️", key=f"cfg_{r['id']}"):
             supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- 8. SECCIÓN: REPORTES (RESTABLECIDA Y MEJORADA) ---
+# --- 8. REPORTES ---
 elif menu == "Reportes":
-    st.header("📊 Análisis de Ventas")
+    st.header("📊 Reportes Detallados")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     
     if res_v.data:
         df_r = pd.DataFrame(res_v.data)
         df_r['fecha_venta'] = pd.to_datetime(df_r['fecha_venta'])
 
-        # --- MÉTRICAS PRINCIPALES ---
         m1, m2, m3, m4 = st.columns(4)
         total_v = df_r['precio_total'].sum()
         total_g = df_r['ganancia'].sum()
-        m1.metric("Ingresos Totales", f"${total_v:,.2f}")
-        m2.metric("Ganancia Neta", f"${total_g:,.2f}", delta=f"{ (total_g/total_v*100) if total_v > 0 else 0:.1f}% Margen")
-        m3.metric("Productos Vendidos", f"{df_r['cantidad'].sum()}")
-        m4.metric("Nº Operaciones", len(df_r))
+        m1.metric("Ingresos", f"${total_v:,.2f}")
+        m2.metric("Ganancia", f"${total_g:,.2f}")
+        m3.metric("Productos", f"{df_r['cantidad'].sum()}")
+        m4.metric("Ventas", len(df_r))
 
-        # --- TABLA DETALLADA ---
         st.divider()
-        st.subheader("📝 Historial de Movimientos")
+        st.subheader("📝 Historial")
         st.dataframe(
             df_r, 
             column_order=("foto_path", "fecha_venta", "codigo_prod", "producto", "color", "cantidad", "precio_total", "ganancia", "vendedor"),
@@ -207,11 +246,5 @@ elif menu == "Reportes":
             }, 
             hide_index=True, use_container_width=True
         )
-
-        # --- GRÁFICO DE VENTAS ---
-        st.divider()
-        st.subheader("📈 Ventas por Fecha")
-        chart_data = df_r.groupby(df_r['fecha_venta'].dt.date)['precio_total'].sum()
-        st.line_chart(chart_data)
     else:
-        st.info("Aún no hay ventas registradas para generar reportes.")
+        st.info("Sin ventas aún.")

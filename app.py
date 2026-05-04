@@ -128,28 +128,31 @@ elif menu == "Inventario":
         if res.data:
             df_i = pd.DataFrame(res.data)
             
-            # --- PANEL DE EDICIÓN RESTAURADO ---
             if st.session_state.role == "admin":
                 st.subheader("🛠️ Editar o Eliminar Producto")
                 lista_editar = [f"{r['codigo']} - {r['nombre']}" for r in res.data]
                 p_edit_raw = st.selectbox("Selecciona un producto para modificar:", ["-- Seleccionar --"] + lista_editar)
                 
                 if p_edit_raw != "-- Seleccionar --":
-                    it_edit = df_i[df_i['codigo'] == p_edit_raw.split(" - ")[0]].iloc[0]
+                    cod_sel = p_edit_raw.split(" - ")[0]
+                    it_edit = df_i[df_i['codigo'] == cod_sel].iloc[0]
+                    # KEY DINÁMICA para que el formulario se refresque al cambiar de producto
+                    ID_K = it_edit['codigo'] 
+                    
                     with st.expander("📝 Formulario de Edición", expanded=True):
                         e_c1, e_c2 = st.columns(2)
                         with e_c1:
                             idx_cat = cats.index(it_edit['categoria']) if it_edit['categoria'] in cats else 0
                             idx_sub = subs.index(it_edit['subcategoria']) if it_edit['subcategoria'] in subs else 0
-                            e_nom = st.text_input("Nombre", value=it_edit['nombre'], key="ed_nom")
-                            e_cat = st.selectbox("Categoría", cats, index=idx_cat, key="ed_cat")
-                            e_sub = st.selectbox("Subcategoría", subs, index=idx_sub, key="ed_sub")
-                            e_col = st.text_input("Colores", value=it_edit.get('colores', ''), key="ed_col")
+                            e_nom = st.text_input("Nombre", value=it_edit['nombre'], key=f"nom_{ID_K}")
+                            e_cat = st.selectbox("Categoría", cats, index=idx_cat, key=f"cat_{ID_K}")
+                            e_sub = st.selectbox("Subcategoría", subs, index=idx_sub, key=f"sub_{ID_K}")
+                            e_col = st.text_input("Colores", value=it_edit.get('colores', ''), key=f"col_{ID_K}")
                         with e_c2:
-                            e_inv = st.number_input("Costo (Inversión)", value=float(it_edit['precio_inv']), key="ed_inv")
-                            e_pub = st.number_input("Precio Público", value=float(it_edit['precio_pub']), key="ed_pub")
-                            e_stk = st.number_input("Stock Actual", value=int(it_edit['stock']), key="ed_stk")
-                            e_cod = st.text_input("Código SKU", value=it_edit['codigo'], key="ed_sku")
+                            e_inv = st.number_input("Costo (Inversión)", value=float(it_edit['precio_inv']), key=f"inv_{ID_K}")
+                            e_pub = st.number_input("Precio Público", value=float(it_edit['precio_pub']), key=f"pub_{ID_K}")
+                            e_stk = st.number_input("Stock Actual", value=int(it_edit['stock']), key=f"stk_{ID_K}")
+                            e_cod = st.text_input("Código SKU", value=it_edit['codigo'], key=f"sku_{ID_K}")
                         
                         eb1, eb2 = st.columns(2)
                         if eb1.button("💾 Guardar Cambios", use_container_width=True):
@@ -173,16 +176,17 @@ elif menu == "Inventario":
             st.subheader("🆕 Registrar Nuevo")
             c1, c2 = st.columns(2)
             with c1:
-                n_nom = st.text_input("Nombre*", key="nw_nom")
+                n_nom = st.text_input("Nombre*")
                 n_cat = st.selectbox("Categoría", cats, key="nw_cat")
                 n_sub = st.selectbox("Subcategoría", subs, key="nw_sub")
-                n_col = st.text_input("Colores (separados por coma)", key="nw_col")
-                n_inv = st.number_input("Precio Inversión", 0.0, key="nw_inv")
-                n_pub = st.number_input("Precio Público", 0.0, key="nw_pub")
-                n_stk = st.number_input("Stock Inicial", 1, key="nw_stk")
+                n_col = st.text_input("Colores (Rojo, Azul, etc)")
+                n_inv = st.number_input("Precio Inversión", 0.0)
+                n_pub = st.number_input("Precio Público", 0.0)
+                n_stk = st.number_input("Stock Inicial", 1)
             with c2:
-                st.write("🖼️ Imagen")
-                foto = st.file_uploader("Elegir de galería o cámara", type=['jpg', 'png', 'jpeg'], key="file_nw")
+                st.write("🖼️ Imagen del Producto")
+                # FILE UPLOADER: Permite cámara en móvil o archivos en PC
+                foto = st.file_uploader("Subir foto o capturar", type=['jpg', 'png', 'jpeg'])
                 if foto: st.image(foto, width=200)
             
             if st.button("🚀 REGISTRAR PRODUCTO", type="primary", use_container_width=True):
@@ -197,9 +201,9 @@ elif menu == "Inventario":
                             "codigo": sku, "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
                             "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
                         }).execute()
-                        st.success(f"Registrado como {sku}")
+                        st.success(f"Producto {sku} creado")
                         st.rerun()
-                    except Exception as e: st.error(f"Error al registrar: {e}")
+                    except Exception as e: st.error(f"Error: {e}")
 
 # --- 7. CONFIGURACIÓN ---
 elif menu == "Configuración":
@@ -234,7 +238,7 @@ elif menu == "Reportes":
         m4.metric("Ventas", len(df_r))
 
         st.divider()
-        st.subheader("📝 Historial")
+        st.subheader("📝 Historial de Ventas")
         st.dataframe(
             df_r, 
             column_order=("foto_path", "fecha_venta", "codigo_prod", "producto", "color", "cantidad", "precio_total", "ganancia", "vendedor"),
@@ -246,5 +250,8 @@ elif menu == "Reportes":
             }, 
             hide_index=True, use_container_width=True
         )
+        st.divider()
+        st.subheader("📈 Tendencia")
+        st.line_chart(df_r.groupby(df_r['fecha_venta'].dt.date)['precio_total'].sum())
     else:
-        st.info("Sin ventas aún.")
+        st.info("Sin registros de ventas.")

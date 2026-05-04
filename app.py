@@ -65,8 +65,11 @@ if menu == "Ventas":
             v_col = st.selectbox("🎨 Color", colores)
             v_cant = st.number_input("Cantidad", 1, int(item['stock']))
             v_pre = st.number_input("Precio Venta", value=float(item['precio_pub']))
-            if st.button("➕ Añadir"):
+            if st.button("➕ Añadir al Carrito"):
+                # Generamos un ID temporal para poder borrarlo individualmente
+                id_temp = datetime.now().timestamp()
                 st.session_state.carrito.append({
+                    "temp_id": id_temp,
                     "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
                     "color": v_col, "cantidad": v_cant, "precio": v_pre, 
                     "precio_inv": item['precio_inv'], "foto": item.get('foto_path')
@@ -75,10 +78,27 @@ if menu == "Ventas":
 
         if st.session_state.carrito:
             st.divider()
-            df_car = pd.DataFrame(st.session_state.carrito)
-            st.table(df_car[["codigo", "nombre", "color", "cantidad", "precio"]])
-            v_vend = st.text_input("Vendedor")
-            if st.button("🚀 FINALIZAR VENTA", type="primary"):
+            st.subheader("🛒 Carrito de Compra")
+            
+            # --- LISTA INTERACTIVA DEL CARRITO ---
+            total_venta = 0
+            for i, p in enumerate(st.session_state.carrito):
+                col_item, col_del = st.columns([6, 1])
+                subtotal = p['cantidad'] * p['precio']
+                total_venta += subtotal
+                
+                with col_item:
+                    st.write(f"**{p['codigo']}** - {p['nombre']} ({p['color']}) | {p['cantidad']} pzs x ${p['precio']:,.2f} = **${subtotal:,.2f}**")
+                
+                with col_del:
+                    if st.button("🗑️", key=f"del_{p['temp_id']}"):
+                        st.session_state.carrito.pop(i)
+                        st.rerun()
+            
+            st.markdown(f"### **Total a Pagar: ${total_venta:,.2f}**")
+            
+            v_vend = st.text_input("Vendedor", key="vendedor_input")
+            if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
                 if v_vend:
                     for p in st.session_state.carrito:
                         stk_q = supabase.table("productos").select("stock").eq("id", p['id']).execute()
@@ -91,10 +111,12 @@ if menu == "Ventas":
                             "foto_path": p['foto'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()
                         }).execute()
                     st.session_state.carrito = []
-                    st.success("Venta exitosa")
+                    st.success("Venta realizada con éxito")
                     st.rerun()
+                else:
+                    st.error("Por favor ingresa el nombre del vendedor.")
 
-# --- 6. SECCIÓN: INVENTARIO (CON EDICIÓN AUTOMATIZADA DE CÓDIGOS) ---
+# --- 6. SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     cats = obtener_config("categoria")
@@ -117,7 +139,6 @@ elif menu == "Inventario":
                     with st.expander("📝 Panel de Edición con Auto-Código", expanded=True):
                         e_c1, e_c2 = st.columns(2)
                         with e_c1:
-                            # Nuevos campos de categoría y subcategoría en edición
                             idx_cat = cats.index(it_edit['categoria']) if it_edit['categoria'] in cats else 0
                             idx_sub = subs.index(it_edit['subcategoria']) if it_edit['subcategoria'] in subs else 0
                             
@@ -130,22 +151,15 @@ elif menu == "Inventario":
                             e_pub = st.number_input("Público", value=float(it_edit['precio_pub']), key="ed_pub")
                             e_stk = st.number_input("Stock", value=int(it_edit['stock']), key="ed_stk")
                             
-                            # Lógica de auto-generación de código
-                            # Si la categoría o subcategoría cambiaron respecto al original, sugerimos nuevo código
                             sugerencia_sku = f"{e_cat[:3]}-{e_sub[:3]}-{it_edit['codigo'].split('-')[-1]}".upper()
                             e_cod = st.text_input("Código SKU (Auto-generado)", value=sugerencia_sku, key="ed_sku")
                         
                         eb1, eb2 = st.columns(2)
                         if eb1.button("💾 Guardar Cambios", use_container_width=True):
                             supabase.table("productos").update({
-                                "codigo": e_cod.upper(), 
-                                "nombre": e_nom, 
-                                "categoria": e_cat,
-                                "subcategoria": e_sub,
-                                "colores": e_col,
-                                "precio_inv": e_inv, 
-                                "precio_pub": e_pub, 
-                                "stock": e_stk
+                                "codigo": e_cod.upper(), "nombre": e_nom, "categoria": e_cat,
+                                "subcategoria": e_sub, "colores": e_col, "precio_inv": e_inv, 
+                                "precio_pub": e_pub, "stock": e_stk
                             }).eq("id", it_edit['id']).execute()
                             st.rerun()
                         if eb2.button("🗑️ ELIMINAR PRODUCTO", type="primary", use_container_width=True):

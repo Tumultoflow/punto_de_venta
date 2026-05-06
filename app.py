@@ -206,19 +206,26 @@ elif menu == "Configuración":
         if b.button("🗑️", key=r['id']):
             supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES (ACTUALIZADA POR SEMANAS) ---
+# --- SECCIÓN: REPORTES (CORREGIDA) ---
 elif menu == "Reportes":
     st.header("📊 Reportes de Desempeño")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     
     if res_v.data:
         df = pd.DataFrame(res_v.data)
-        # Conversión de fechas y creación de columna "Semana"
-        df['fecha_venta'] = pd.to_datetime(df['fecha_venta'])
+        
+        # 1. Limpieza de datos y conversión de fechas
+        df['fecha_venta'] = pd.to_datetime(df['fecha_venta'], errors='coerce')
+        df = df.dropna(subset=['fecha_venta']) # Eliminar ventas sin fecha válida
+        
+        # 2. Creación de columna Semana
         df['Semana'] = df['fecha_venta'].dt.strftime('%Y - Semana %W')
         
-        # Filtro por semana
-        lista_semanas = ["Todo el Historial"] + sorted(df['Semana'].unique().tolist(), reverse=True)
+        # 3. Creación de lista de semanas evitando el error de ordenación
+        # Quitamos nulos, sacamos únicos, convertimos a string y ordenamos
+        semanas_unicas = df['Semana'].dropna().unique().astype(str).tolist()
+        lista_semanas = ["Todo el Historial"] + sorted(semanas_unicas, reverse=True)
+        
         semana_sel = st.selectbox("📅 Seleccionar Semana Laborada:", lista_semanas)
         
         if semana_sel == "Todo el Historial":
@@ -228,19 +235,21 @@ elif menu == "Reportes":
             df_filtrado = df[df['Semana'] == semana_sel]
             titulo_seccion = f"Resultados: {semana_sel}"
 
-        # Métricas principales
+        # 4. Métricas principales
         st.subheader(titulo_seccion)
         col1, col2, col3 = st.columns(3)
-        total_v = df_filtrado['precio_total'].sum()
-        total_g = df_filtrado['ganancia'].sum()
-        total_p = df_filtrado['cantidad'].sum()
         
-        col1.metric("Ventas Cobradas", f"${total_v:,.2f}")
-        col2.metric("Ganancia Neta", f"${total_g:,.2f}")
-        col3.metric("Productos Salientes", f"{int(total_p)} pzs")
+        # Asegurar que los cálculos sean numéricos
+        df_filtrado['precio_total'] = pd.to_numeric(df_filtrado['precio_total'], errors='coerce').fillna(0)
+        df_filtrado['ganancia'] = pd.to_numeric(df_filtrado['ganancia'], errors='coerce').fillna(0)
+        df_filtrado['cantidad'] = pd.to_numeric(df_filtrado['cantidad'], errors='coerce').fillna(0)
 
-        # Gráfico comparativo por semana (solo si hay varias semanas)
-        if semana_sel == "Todo el Historial":
+        col1.metric("Ventas Cobradas", f"${df_filtrado['precio_total'].sum():,.2f}")
+        col2.metric("Ganancia Neta", f"${df_filtrado['ganancia'].sum():,.2f}")
+        col3.metric("Productos Salientes", f"{int(df_filtrado['cantidad'].sum())} pzs")
+
+        # 5. Gráfico de tendencia
+        if semana_sel == "Todo el Historial" and len(semanas_unicas) > 1:
             st.divider()
             st.write("📈 **Tendencia Semanal (Ventas vs Ganancias)**")
             df_grafico = df.groupby('Semana')[['precio_total', 'ganancia']].sum().sort_index()

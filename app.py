@@ -53,7 +53,6 @@ if not st.session_state.auth:
 # --- 5. INTERFAZ PRINCIPAL ---
 with st.sidebar:
     st.title("⚖️ TUMULTOFLOW")
-    st.markdown(f"**Usuario:** `{st.session_state.role.upper()}`")
     menu = st.radio("Navegación", ["Ventas", "Inventario", "Configuración", "Reportes"])
     if st.button("Cerrar Sesión", use_container_width=True):
         st.session_state.auth = False
@@ -122,10 +121,8 @@ elif menu == "Inventario":
             if sel_edit != "-- Seleccionar --":
                 it_e = df_i[df_i['codigo'] == sel_edit.split(" - ")[0]].iloc[0]
                 with st.expander("✏️ Editar Información y Foto", expanded=True):
-                    # Edición de Foto
                     c_img1, c_img2 = st.columns([1, 2])
                     with c_img1:
-                        st.write("**Actual:**")
                         if it_e.get('foto_path'): st.image(it_e['foto_path'], width=150)
                     with c_img2:
                         nueva_foto = st.file_uploader("🖼️ Cambiar Imagen", type=['jpg','png','jpeg'])
@@ -159,7 +156,7 @@ elif menu == "Inventario":
                         }).eq("id", it_e['id']).execute()
                         st.rerun()
                     
-                    if b_col2.button("🗑️ ELIMINAR PRODUCTO", type="primary", use_container_width=True):
+                    if b_col2.button("🗑️ ELIMINAR", type="primary", use_container_width=True):
                         supabase.table("productos").delete().eq("id", it_e['id']).execute()
                         st.rerun()
 
@@ -182,7 +179,7 @@ elif menu == "Inventario":
                 n_stk = st.number_input("Stock Inicial", 1)
                 n_foto = st.file_uploader("Subir Imagen", type=['jpg','png','jpeg'])
             
-            if st.form_submit_button("🚀 REGISTRAR PRODUCTO", use_container_width=True):
+            if st.form_submit_button("🚀 REGISTRAR", use_container_width=True):
                 if n_nom and n_foto:
                     fname = f"{n_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
                     supabase.storage.from_("fotos").upload(fname, n_foto.getvalue())
@@ -209,27 +206,58 @@ elif menu == "Configuración":
         if b.button("🗑️", key=r['id']):
             supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES ---
+# --- SECCIÓN: REPORTES (ACTUALIZADA POR SEMANAS) ---
 elif menu == "Reportes":
-    st.header("📊 Reportes de Ventas")
+    st.header("📊 Reportes de Desempeño")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
+    
     if res_v.data:
-        df_r = pd.DataFrame(res_v.data)
-        df_r['precio_total'] = pd.to_numeric(df_r['precio_total'], errors='coerce').fillna(0)
-        df_r['ganancia'] = pd.to_numeric(df_r['ganancia'], errors='coerce').fillna(0)
+        df = pd.DataFrame(res_v.data)
+        # Conversión de fechas y creación de columna "Semana"
+        df['fecha_venta'] = pd.to_datetime(df['fecha_venta'])
+        df['Semana'] = df['fecha_venta'].dt.strftime('%Y - Semana %W')
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Ventas Totales", f"${df_r['precio_total'].sum():,.2f}")
-        m2.metric("Ganancia Neta", f"${df_r['ganancia'].sum():,.2f}")
-        m3.metric("Productos Vendidos", f"{int(df_r['cantidad'].sum())} pzs")
+        # Filtro por semana
+        lista_semanas = ["Todo el Historial"] + sorted(df['Semana'].unique().tolist(), reverse=True)
+        semana_sel = st.selectbox("📅 Seleccionar Semana Laborada:", lista_semanas)
         
+        if semana_sel == "Todo el Historial":
+            df_filtrado = df
+            titulo_seccion = "Historial Total"
+        else:
+            df_filtrado = df[df['Semana'] == semana_sel]
+            titulo_seccion = f"Resultados: {semana_sel}"
+
+        # Métricas principales
+        st.subheader(titulo_seccion)
+        col1, col2, col3 = st.columns(3)
+        total_v = df_filtrado['precio_total'].sum()
+        total_g = df_filtrado['ganancia'].sum()
+        total_p = df_filtrado['cantidad'].sum()
+        
+        col1.metric("Ventas Cobradas", f"${total_v:,.2f}")
+        col2.metric("Ganancia Neta", f"${total_g:,.2f}")
+        col3.metric("Productos Salientes", f"{int(total_p)} pzs")
+
+        # Gráfico comparativo por semana (solo si hay varias semanas)
+        if semana_sel == "Todo el Historial":
+            st.divider()
+            st.write("📈 **Tendencia Semanal (Ventas vs Ganancias)**")
+            df_grafico = df.groupby('Semana')[['precio_total', 'ganancia']].sum().sort_index()
+            st.bar_chart(df_grafico)
+
         st.divider()
+        st.write("📝 **Detalle de Movimientos**")
         st.dataframe(
-            df_r, 
+            df_filtrado, 
             column_config={
-                "foto_path": st.column_config.ImageColumn("Foto"),
-                "precio_total": st.column_config.NumberColumn("Venta", format="$%.2f"),
-                "ganancia": st.column_config.NumberColumn("Ganancia", format="$%.2f")
+                "foto_path": st.column_config.ImageColumn("Miniatura"),
+                "precio_total": st.column_config.NumberColumn("Total", format="$%.2f"),
+                "ganancia": st.column_config.NumberColumn("Ganancia", format="$%.2f"),
+                "fecha_venta": st.column_config.DatetimeColumn("Fecha/Hora", format="DD/MM/YY HH:mm")
             }, 
-            use_container_width=True
+            use_container_width=True,
+            hide_index=True
         )
+    else:
+        st.warning("No hay datos de ventas registrados aún.")

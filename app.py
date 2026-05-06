@@ -21,6 +21,8 @@ def obtener_config(tipo):
         return ["GENERAL"]
 
 def generar_sku(cat, sub):
+    if not cat or not sub:
+        return "GEN-GEN-0001"
     prefijo = f"{cat[:3]}-{sub[:3]}".upper()
     try:
         res = supabase.table("productos").select("codigo").like("codigo", f"{prefijo}%").execute()
@@ -61,7 +63,6 @@ with st.sidebar:
     st.title("⚖️ TUMULTOFLOW")
     st.write(f"👤 Rol: **{st.session_state.role.upper()}**")
     
-    # Restricción de Menú
     opciones_menu = ["Ventas", "Inventario"]
     if st.session_state.role == "admin":
         opciones_menu += ["Configuración", "Reportes"]
@@ -106,7 +107,6 @@ if menu == "Ventas":
             st.divider()
             total_v = sum(p['precio'] * p['cantidad'] for p in st.session_state.carrito)
             st.subheader(f"Total a Pagar: ${total_v:,.2f}")
-            # Si es equipo, el nombre del vendedor se puede pre-llenar o forzar
             v_vend = st.text_input("Vendedor", value="Equipo" if st.session_state.role == "equipo" else "")
             
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True) and v_vend:
@@ -123,12 +123,11 @@ if menu == "Ventas":
                 st.success("¡Venta completada!")
                 st.rerun()
 
-# --- SECCIÓN: INVENTARIO (CON RESTRICCIONES) ---
+# --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
     
-    # Equipo solo puede ver el catálogo, no registrar nuevos si así lo deseas
     tabs_inv = ["📋 Catálogo"]
     if st.session_state.role == "admin":
         tabs_inv.append("🆕 Nuevo Producto")
@@ -140,7 +139,6 @@ elif menu == "Inventario":
         if res.data:
             df_i = pd.DataFrame(res.data)
             
-            # Si es equipo, ocultamos el costo de inversión en la tabla principal
             columnas_visibles = df_i.columns.tolist()
             if st.session_state.role == "equipo" and "precio_inv" in columnas_visibles:
                 columnas_visibles.remove("precio_inv")
@@ -161,17 +159,22 @@ elif menu == "Inventario":
                     with c1:
                         e_nom = st.text_input("Nombre", value=it_e['nombre'], disabled=(st.session_state.role != "admin"))
                         e_cat = st.selectbox("Categoría", cats, index=cats.index(it_e['categoria']) if it_e['categoria'] in cats else 0, disabled=(st.session_state.role != "admin"))
+                        # CORRECCIÓN 1: Se agregó el campo subcategoría en la edición
+                        sub_actual = it_e.get('subcategoria', '')
+                        e_sub = st.selectbox("Subcategoría", subs, index=subs.index(sub_actual) if sub_actual in subs else 0, disabled=(st.session_state.role != "admin"))
                         e_col = st.text_input("Colores", value=it_e['colores'], disabled=(st.session_state.role != "admin"))
                     with c2:
-                        e_cod = st.text_input("Código SKU", value=it_e['codigo'], disabled=True)
-                        # RESTRICCIÓN DE COSTO
+                        # CORRECCIÓN 2: Si cambian la categoría o subcategoría, sugiere el nuevo código, pero permite editarlo (disabled=False para admin)
+                        sku_sugerido = generar_sku(e_cat, e_sub) if (e_cat != it_e['categoria'] or e_sub != sub_actual) else it_e['codigo']
+                        e_cod = st.text_input("Código SKU", value=sku_sugerido, disabled=(st.session_state.role != "admin"))
+                        
                         if st.session_state.role == "admin":
                             e_inv = st.number_input("Costo (Inversión)", value=float(it_e['precio_inv']))
                         else:
-                            e_inv = it_e['precio_inv'] # Se mantiene el valor oculto
+                            e_inv = it_e['precio_inv']
                         
                         e_pub = st.number_input("Precio Venta", value=float(it_e['precio_pub']), disabled=(st.session_state.role != "admin"))
-                        e_stk = st.number_input("Stock Actual", value=int(it_e['stock'])) # El equipo sí puede ajustar stock si hay error manual
+                        e_stk = st.number_input("Stock Actual", value=int(it_e['stock']))
                     
                     if st.session_state.role == "admin":
                         b_col1, b_col2 = st.columns(2)
@@ -183,8 +186,8 @@ elif menu == "Inventario":
                                 url_f = supabase.storage.from_("fotos").get_public_url(fn)
                             
                             supabase.table("productos").update({
-                                "nombre": e_nom, "categoria": e_cat, "colores": e_col, 
-                                "precio_inv": e_inv, "precio_pub": e_pub, "stock": e_stk, 
+                                "nombre": e_nom, "codigo": e_cod.upper(), "categoria": e_cat, "subcategoria": e_sub,
+                                "colores": e_col, "precio_inv": e_inv, "precio_pub": e_pub, "stock": e_stk, 
                                 "descripcion": e_desc, "foto_path": url_f
                             }).eq("id", it_e['id']).execute()
                             st.rerun()
@@ -202,34 +205,39 @@ elif menu == "Inventario":
 
     if st.session_state.role == "admin":
         with tabs[1]:
-            with st.form("nuevo_p"):
-                n_nom = st.text_input("Nombre")
-                n_desc = st.text_area("Descripción")
-                c1, c2 = st.columns(2)
-                with c1:
-                    n_cat = st.selectbox("Categoría", cats)
-                    n_sub = st.selectbox("Subcategoría", subs)
-                    n_cod = st.text_input("SKU", value=generar_sku(n_cat, n_sub))
-                    n_col = st.text_input("Colores")
-                with c2:
-                    n_inv = st.number_input("Costo", 0.0)
-                    n_pub = st.number_input("Venta", 0.0)
-                    n_stk = st.number_input("Stock Inicial", 1)
-                    n_foto = st.file_uploader("Subir Imagen", type=['jpg','png','jpeg'])
-                
-                if st.form_submit_button("🚀 REGISTRAR", use_container_width=True):
-                    if n_nom and n_foto:
-                        fname = f"{n_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
-                        supabase.storage.from_("fotos").upload(fname, n_foto.getvalue())
-                        url = supabase.storage.from_("fotos").get_public_url(fname)
-                        supabase.table("productos").insert({
-                            "codigo": n_cod.upper(), "nombre": n_nom, "descripcion": n_desc, "categoria": n_cat, 
-                            "subcategoria": n_sub, "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, 
-                            "stock": n_stk, "foto_path": url
-                        }).execute()
-                        st.rerun()
+            # CORRECCIÓN 3: Al usar la asignación fuera del st.form, el SKU cambia de forma dinámica e instantánea
+            st.write("### Registrar Nuevo Artículo")
+            n_nom = st.text_input("Nombre")
+            n_desc = st.text_area("Descripción")
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                n_cat = st.selectbox("Categoría", cats, key="new_cat")
+                n_sub = st.selectbox("Subcategoría", subs, key="new_sub")
+                # El valor cambia dinámicamente según lo seleccionado arriba
+                sku_dinamico = generar_sku(n_cat, n_sub)
+                n_cod = st.text_input("SKU Generado automáticamente", value=sku_dinamico)
+                n_col = st.text_input("Colores")
+            with c2:
+                n_inv = st.number_input("Costo", 0.0)
+                n_pub = st.number_input("Venta", 0.0)
+                n_stk = st.number_input("Stock Inicial", 1)
+                n_foto = st.file_uploader("Subir Imagen", type=['jpg','png','jpeg'])
+            
+            if st.button("🚀 REGISTRAR", use_container_width=True):
+                if n_nom and n_foto:
+                    fname = f"{n_cod}_{datetime.now().strftime('%H%M%S')}.jpg"
+                    supabase.storage.from_("fotos").upload(fname, n_foto.getvalue())
+                    url = supabase.storage.from_("fotos").get_public_url(fname)
+                    supabase.table("productos").insert({
+                        "codigo": n_cod.upper(), "nombre": n_nom, "descripcion": n_desc, "categoria": n_cat, 
+                        "subcategoria": n_sub, "colores": n_col, "precio_inv": n_inv, "precio_pub": n_pub, 
+                        "stock": n_stk, "foto_path": url
+                    }).execute()
+                    st.success("¡Producto creado con éxito!")
+                    st.rerun()
 
-# --- SECCIÓN: CONFIGURACIÓN (Solo Admin) ---
+# --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
     tipo = st.radio("Gestionar:", ["Categorías", "Subcategorías"], horizontal=True)
@@ -244,7 +252,7 @@ elif menu == "Configuración" and st.session_state.role == "admin":
         if b.button("🗑️", key=r['id']):
             supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES (Solo Admin) ---
+# --- SECCIÓN: REPORTES ---
 elif menu == "Reportes" and st.session_state.role == "admin":
     st.header("📊 Reportes de Desempeño")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()

@@ -21,7 +21,6 @@ def obtener_config(tipo):
     except: return ["GENERAL"]
 
 def generar_sku(cat, sub):
-    if not cat or not sub: return "GEN-GEN-0001"
     prefijo = f"{cat[:3]}-{sub[:3]}".upper()
     try:
         res = supabase.table("productos").select("codigo").like("codigo", f"{prefijo}%").execute()
@@ -75,7 +74,7 @@ with st.sidebar:
         st.session_state.auth = False
         st.rerun()
 
-# --- VENTAS ---
+# --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
@@ -103,36 +102,35 @@ if menu == "Ventas":
             v_vendedor = st.text_input("Vendedor", value=st.session_state.role.upper())
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
                 for p in st.session_state.carrito:
-                    # Descontar
-                    prod_db = supabase.table("productos").select("stock").eq("id", p['id']).execute()
-                    nuevo_stock = int(prod_db.data[0]['stock']) - p['cantidad']
-                    supabase.table("productos").update({"stock": nuevo_stock}).eq("id", p['id']).execute()
-                    # Registrar
+                    # Descontar stock
+                    p_db = supabase.table("productos").select("stock").eq("id", p['id']).execute()
+                    n_stk = int(p_db.data[0]['stock']) - p['cantidad']
+                    supabase.table("productos").update({"stock": n_stk}).eq("id", p['id']).execute()
+                    # Registrar venta
                     supabase.table("ventas").insert({
                         "producto": p['nombre'], "codigo_prod": p['codigo'], "cantidad": p['cantidad'],
                         "precio_total": float(p['precio'] * p['cantidad']),
                         "ganancia": float((p['precio'] - p['precio_inv']) * p['cantidad']), "vendedor": v_vendedor
                     }).execute()
                 st.session_state.carrito = []
-                st.success("Venta Guardada")
-                st.rerun()
+                st.success("Venta Guardada"); st.rerun()
 
-# --- INVENTARIO ---
+# --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
-    tabs = st.tabs(["📋 Catálogo", "🆕 Nuevo"])
+    tabs = st.tabs(["📋 Catálogo e Impresión", "🆕 Nuevo Producto"])
     
     with tabs[0]:
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
-            c_d1, c_d2 = st.columns(2)
-            c_d1.download_button("🖼️ Catálogo Imprimible", generar_html_catalogo(df_i), "catalogo.html", "text/html")
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as wr:
+            c1, c2 = st.columns(2)
+            c1.download_button("🖼️ Catálogo con Fotos (Imprimir)", generar_html_catalogo(df_i), "catalogo.html", "text/html")
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine='xlsxwriter') as wr:
                 df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(wr, index=False)
-            c_d2.download_button("📊 Lista Excel", buffer.getvalue(), "precios.xlsx", "application/vnd.ms-excel")
+            c2.download_button("📊 Excel de Precios", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel")
             st.dataframe(df_i, column_config={"foto_path": st.column_config.ImageColumn("Foto")}, use_container_width=True)
 
     with tabs[1]:
@@ -146,60 +144,78 @@ elif menu == "Inventario":
             n_stk = st.number_input("Stock", 0)
             n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'])
             if st.button("Guardar"):
-                fn = f"{n_sku}.jpg"
+                fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
                 supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
                 url = supabase.storage.from_("fotos").get_public_url(fn)
                 supabase.table("productos").insert({
                     "codigo": n_sku.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
                     "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
                 }).execute()
-                st.success("Creado"); st.rerun()
+                st.success("Guardado"); st.rerun()
 
-# --- CONFIGURACIÓN ---
+# --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración":
     st.header("⚙️ Configuración")
-    t = st.radio("Tipo", ["categoria", "subcategoria"], horizontal=True)
-    v = st.text_input("Nuevo Valor").upper()
-    if st.button("Añadir"):
-        supabase.table("configuracion").insert({"tipo": t, "valor": v}).execute(); st.rerun()
+    colA, colB = st.columns(2)
+    with colA:
+        tipo = st.selectbox("Añadir nuevo:", ["categoria", "subcategoria"])
+        valor = st.text_input("Nombre").upper().strip()
+        if st.button("Añadir"):
+            supabase.table("configuracion").insert({"tipo": tipo, "valor": valor}).execute()
+            st.rerun()
+    with colB:
+        tipo_v = st.radio("Ver:", ["categoria", "subcategoria"], horizontal=True)
+        res_c = supabase.table("configuracion").select("*").eq("tipo", tipo_v).execute()
+        for r in res_c.data:
+            c1, c2 = st.columns([4, 1])
+            c1.write(r['valor'])
+            if c2.button("🗑️", key=r['id']):
+                supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- REPORTES Y CANCELACIONES ---
+# --- SECCIÓN: REPORTES (CON VENTAS POR SEMANA) ---
 elif menu == "Reportes":
-    st.header("📊 Reportes y Control")
-    t_rep = st.tabs(["📈 Historial de Ventas", "🚫 ANULAR VENTAS"])
+    st.header("📊 Reportes Semanales")
+    t_rep = st.tabs(["📈 Análisis por Semana", "📋 Historial Completo", "🚫 Anulaciones"])
     
-    with t_rep[0]:
-        res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
-        if res_v.data:
-            df_v = pd.DataFrame(res_v.data)
-            st.metric("Total Ventas", f"${df_v['precio_total'].sum():,.2f}")
-            st.dataframe(df_v, use_container_width=True)
-
-    with t_rep[1]:
-        st.subheader("⚠️ Cancelar Venta Registrada")
-        st.write("Al cancelar, el stock se devolverá automáticamente al inventario.")
-        res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).limit(20).execute()
-        if res_v.data:
-            opciones_anular = [f"ID: {r['id']} | {r['codigo_prod']} - {r['producto']} ({r['cantidad']} pz)" for r in res_v.data]
-            selección = st.selectbox("Seleccione la venta a anular:", opciones_anular)
+    res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
+    
+    if res_v.data:
+        df_v = pd.DataFrame(res_v.data)
+        # Convertir fecha y extraer semana
+        df_v['fecha_venta'] = pd.to_datetime(df_v['fecha_venta']).dt.tz_convert('America/Mexico_City')
+        df_v['Semana'] = df_v['fecha_venta'].dt.strftime('%Y - Sem %U')
+        
+        with t_rep[0]:
+            st.subheader("Ventas y Ganancias por Semana")
+            # Agrupar por semana
+            df_semanal = df_v.groupby('Semana').agg({
+                'precio_total': 'sum',
+                'ganancia': 'sum',
+                'id': 'count'
+            }).rename(columns={'precio_total': 'Ventas ($)', 'ganancia': 'Ganancia ($)', 'id': 'Cant. Artículos'})
             
-            if st.button("❌ CONFIRMAR ANULACIÓN", type="primary"):
-                id_venta = int(selección.split(" | ")[0].split(": ")[1])
-                venta_data = next(item for item in res_v.data if item["id"] == id_venta)
-                
-                try:
-                    # 1. Recuperar producto para devolver stock
-                    prod_res = supabase.table("productos").select("stock").eq("codigo", venta_data['codigo_prod']).execute()
-                    if prod_res.data:
-                        stock_actual = prod_res.data[0]['stock']
-                        nuevo_stock = stock_actual + venta_data['cantidad']
-                        # 2. Actualizar stock en DB
-                        supabase.table("productos").update({"stock": nuevo_stock}).eq("codigo", venta_data['codigo_prod']).execute()
-                    
-                    # 3. Eliminar registro de venta
-                    supabase.table("ventas").delete().eq("id", id_venta).execute()
-                    
-                    st.success(f"Venta {id_venta} anulada. Se devolvieron {venta_data['cantidad']} unidades al inventario.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error al anular: {e}")
+            st.dataframe(df_semanal.sort_index(ascending=False), use_container_width=True)
+            
+            # Gráfica rápida
+            st.bar_chart(df_semanal[['Ventas ($)', 'Ganancia ($)']])
+
+        with t_rep[1]:
+            st.subheader("Historial Detallado")
+            st.dataframe(df_v[['fecha_venta', 'producto', 'cantidad', 'precio_total', 'vendedor']], use_container_width=True)
+
+        with t_rep[2]:
+            st.subheader("Cancelar Venta")
+            opc_anul = [f"{r['id']} | {r['producto']} | ${r['precio_total']}" for r in res_v.data]
+            sel_anul = st.selectbox("Venta a eliminar:", opc_anul)
+            if st.button("Confirmar Anulación"):
+                id_a = int(sel_anul.split(" | ")[0])
+                v_sel = next(i for i in res_v.data if i['id'] == id_a)
+                # Devolver stock
+                p_res = supabase.table("productos").select("stock").eq("codigo", v_sel['codigo_prod']).execute()
+                if p_res.data:
+                    n_s = p_res.data[0]['stock'] + v_sel['cantidad']
+                    supabase.table("productos").update({"stock": n_s}).eq("codigo", v_sel['codigo_prod']).execute()
+                supabase.table("ventas").delete().eq("id", id_a).execute()
+                st.success("Venta anulada y stock devuelto"); st.rerun()
+    else:
+        st.info("No hay ventas registradas aún.")

@@ -103,40 +103,31 @@ if menu == "Ventas":
             
             col_f1, col_f2 = st.columns(2)
             with col_f1:
-                # SELECTOR DE FECHA MANUAL
                 fecha_manual = st.date_input("Fecha de la venta", datetime.now(ZONA_LOCAL))
                 v_vendedor = st.text_input("Vendedor", value=st.session_state.role.upper())
             
             with col_f2:
-                st.write("") # Espacio
-                st.write("") # Espacio
+                st.write("") 
                 if st.button("🗑️ CANCELAR/VACIAR CARRITO", use_container_width=True):
                     st.session_state.carrito = []
-                    st.warning("Venta cancelada.")
                     st.rerun()
 
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
-                # Combinamos la fecha elegida con la hora actual
                 hora_actual = datetime.now(ZONA_LOCAL).time()
                 fecha_final = datetime.combine(fecha_manual, hora_actual).isoformat()
                 
                 for p in st.session_state.carrito:
-                    # Descontar stock
                     p_db = supabase.table("productos").select("stock").eq("id", p['id']).execute()
                     n_stk = int(p_db.data[0]['stock']) - p['cantidad']
                     supabase.table("productos").update({"stock": n_stk}).eq("id", p['id']).execute()
-                    # Registrar venta
                     supabase.table("ventas").insert({
-                        "producto": p['nombre'], 
-                        "codigo_prod": p['codigo'], 
-                        "cantidad": p['cantidad'],
+                        "producto": p['nombre'], "codigo_prod": p['codigo'], "cantidad": p['cantidad'],
                         "precio_total": float(p['precio'] * p['cantidad']),
                         "ganancia": float((p['precio'] - p['precio_inv']) * p['cantidad']), 
-                        "vendedor": v_vendedor,
-                        "fecha_venta": fecha_final
+                        "vendedor": v_vendedor, "fecha_venta": fecha_final
                     }).execute()
                 st.session_state.carrito = []
-                st.success("Venta Registrada con éxito")
+                st.success("Venta Registrada")
                 st.rerun()
 
 # --- SECCIÓN: INVENTARIO ---
@@ -149,12 +140,6 @@ elif menu == "Inventario":
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
-            c1, c2 = st.columns(2)
-            c1.download_button("🖼️ Catálogo PDF (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html")
-            buf = io.BytesIO()
-            with pd.ExcelWriter(buf, engine='xlsxwriter') as wr:
-                df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(wr, index=False)
-            c2.download_button("📊 Lista Excel", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel")
             st.dataframe(df_i, column_config={"foto_path": st.column_config.ImageColumn("Foto")}, use_container_width=True)
 
     with tabs[1]:
@@ -196,43 +181,54 @@ elif menu == "Configuración":
             if c2.button("🗑️", key=f"conf_{r['id']}"):
                 supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES ---
+# --- SECCIÓN: REPORTES (CON FUNCIÓN DE REPARAR FECHA) ---
 elif menu == "Reportes":
-    st.header("📊 Reportes Semanales")
-    t_rep = st.tabs(["📈 Análisis Semanal", "📋 Historial Completo", "🚫 Anular Venta Registrada"])
+    st.header("📊 Reportes y Gestión")
+    t_rep = st.tabs(["📈 Análisis Semanal", "📋 Historial Completo", "🛠️ Corregir o Anular Ventas"])
     
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
     
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        try:
-            df_v['fecha_venta'] = pd.to_datetime(df_v['fecha_venta'], utc=True).dt.tz_convert('America/Mexico_City')
-            df_v['Semana'] = df_v['fecha_venta'].dt.strftime('%Y - Sem %U')
-        except:
-            df_v['Semana'] = "Indefinida"
+        # Limpieza de fechas para análisis
+        df_v['fecha_limpia'] = pd.to_datetime(df_v['fecha_venta'], utc=True, errors='coerce').dt.tz_convert('America/Mexico_City')
+        df_v['Semana'] = df_v['fecha_limpia'].dt.strftime('%Y - Sem %U').fillna("SIN FECHA")
         
         with t_rep[0]:
             df_semanal = df_v.groupby('Semana').agg({'precio_total': 'sum', 'ganancia': 'sum', 'id': 'count'})
             st.dataframe(df_semanal.sort_index(ascending=False), use_container_width=True)
-            st.bar_chart(df_semanal[['precio_total', 'ganancia']])
 
         with t_rep[1]:
-            df_v['Fecha Formato'] = df_v['fecha_venta'].dt.strftime('%d/%m/%Y %H:%M')
+            df_v['Fecha Formato'] = df_v['fecha_limpia'].dt.strftime('%d/%m/%Y %H:%M').fillna("🚫 Sin Fecha")
             st.dataframe(df_v[['Fecha Formato', 'producto', 'cantidad', 'precio_total', 'vendedor']], use_container_width=True)
 
         with t_rep[2]:
-            st.subheader("Eliminar venta de la base de datos")
-            opc_anul = [f"{r['id']} | {r['producto']} | {r['fecha_venta']}" for r in res_v.data]
-            sel_anul = st.selectbox("Seleccione:", opc_anul)
-            if st.button("Confirmar Borrado"):
-                id_a = int(sel_anul.split(" | ")[0])
-                v_sel = next(i for i in res_v.data if i['id'] == id_a)
-                # Devolver stock
-                p_res = supabase.table("productos").select("stock").eq("codigo", v_sel['codigo_prod']).execute()
-                if p_res.data:
-                    n_s = p_res.data[0]['stock'] + v_sel['cantidad']
-                    supabase.table("productos").update({"stock": n_s}).eq("codigo", v_sel['codigo_prod']).execute()
-                supabase.table("ventas").delete().eq("id", id_a).execute()
-                st.success("Venta eliminada y stock restaurado"); st.rerun()
+            st.subheader("Herramientas de Edición")
+            opc_v = [f"{r['id']} | {r['producto']} | {r.get('fecha_venta', 'S/F')}" for r in res_v.data]
+            sel_v = st.selectbox("Seleccione una venta para modificar/eliminar:", opc_v)
+            id_sel = int(sel_v.split(" | ")[0])
+            
+            c_edit1, c_edit2 = st.columns(2)
+            
+            with c_edit1:
+                st.info("📅 Corregir Fecha")
+                nueva_fecha = st.date_input("Elegir fecha correcta")
+                if st.button("Actualizar Fecha"):
+                    # Poner la fecha elegida con hora 12:00 para que sea neutra
+                    fecha_fix = datetime.combine(nueva_fecha, datetime.min.time()).replace(hour=12).isoformat()
+                    supabase.table("ventas").update({"fecha_venta": fecha_fix}).eq("id", id_sel).execute()
+                    st.success("Fecha actualizada correctamente"); st.rerun()
+            
+            with c_edit2:
+                st.warning("🗑️ Eliminar Definitivamente")
+                if st.button("Confirmar Borrado de Venta"):
+                    v_data = next(i for i in res_v.data if i['id'] == id_sel)
+                    # Devolver stock
+                    p_res = supabase.table("productos").select("stock").eq("codigo", v_data['codigo_prod']).execute()
+                    if p_res.data:
+                        n_s = p_res.data[0]['stock'] + v_data['cantidad']
+                        supabase.table("productos").update({"stock": n_s}).eq("codigo", v_data['codigo_prod']).execute()
+                    supabase.table("ventas").delete().eq("id", id_sel).execute()
+                    st.success("Venta eliminada y stock devuelto"); st.rerun()
     else:
-        st.info("No hay ventas aún.")
+        st.info("No hay registros.")

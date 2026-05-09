@@ -101,16 +101,23 @@ if menu == "Ventas":
             st.table(pd.DataFrame(st.session_state.carrito)[['codigo', 'nombre', 'cantidad', 'precio']])
             v_vendedor = st.text_input("Vendedor", value=st.session_state.role.upper())
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
+                # OBTENER FECHA ACTUAL PARA EL REGISTRO
+                fecha_ahora = datetime.now(ZONA_LOCAL).isoformat()
+                
                 for p in st.session_state.carrito:
                     # Descontar stock
                     p_db = supabase.table("productos").select("stock").eq("id", p['id']).execute()
                     n_stk = int(p_db.data[0]['stock']) - p['cantidad']
                     supabase.table("productos").update({"stock": n_stk}).eq("id", p['id']).execute()
-                    # Registrar venta
+                    # Registrar venta con FECHA EXPLÍCITA
                     supabase.table("ventas").insert({
-                        "producto": p['nombre'], "codigo_prod": p['codigo'], "cantidad": p['cantidad'],
+                        "producto": p['nombre'], 
+                        "codigo_prod": p['codigo'], 
+                        "cantidad": p['cantidad'],
                         "precio_total": float(p['precio'] * p['cantidad']),
-                        "ganancia": float((p['precio'] - p['precio_inv']) * p['cantidad']), "vendedor": v_vendedor
+                        "ganancia": float((p['precio'] - p['precio_inv']) * p['cantidad']), 
+                        "vendedor": v_vendedor,
+                        "fecha_venta": fecha_ahora # <--- CORRECCIÓN FECHA
                     }).execute()
                 st.session_state.carrito = []
                 st.success("Venta Guardada"); st.rerun()
@@ -172,7 +179,7 @@ elif menu == "Configuración":
             if c2.button("🗑️", key=r['id']):
                 supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES (CON VENTAS POR SEMANA) ---
+# --- SECCIÓN: REPORTES (CORREGIDA) ---
 elif menu == "Reportes":
     st.header("📊 Reportes Semanales")
     t_rep = st.tabs(["📈 Análisis por Semana", "📋 Historial Completo", "🚫 Anulaciones"])
@@ -181,13 +188,18 @@ elif menu == "Reportes":
     
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        # Convertir fecha y extraer semana
-        df_v['fecha_venta'] = pd.to_datetime(df_v['fecha_venta']).dt.tz_convert('America/Mexico_City')
-        df_v['Semana'] = df_v['fecha_venta'].dt.strftime('%Y - Sem %U')
+        
+        # --- BLOQUE DE CORRECCIÓN DE FECHAS ---
+        try:
+            # Convertir a datetime y asegurar que sea timezone-aware
+            df_v['fecha_venta'] = pd.to_datetime(df_v['fecha_venta'], utc=True).dt.tz_convert('America/Mexico_City')
+            df_v['Semana'] = df_v['fecha_venta'].dt.strftime('%Y - Sem %U')
+        except Exception as e:
+            st.error(f"Error procesando fechas: {e}")
+            df_v['Semana'] = "Sin Fecha"
         
         with t_rep[0]:
             st.subheader("Ventas y Ganancias por Semana")
-            # Agrupar por semana
             df_semanal = df_v.groupby('Semana').agg({
                 'precio_total': 'sum',
                 'ganancia': 'sum',
@@ -195,13 +207,13 @@ elif menu == "Reportes":
             }).rename(columns={'precio_total': 'Ventas ($)', 'ganancia': 'Ganancia ($)', 'id': 'Cant. Artículos'})
             
             st.dataframe(df_semanal.sort_index(ascending=False), use_container_width=True)
-            
-            # Gráfica rápida
             st.bar_chart(df_semanal[['Ventas ($)', 'Ganancia ($)']])
 
         with t_rep[1]:
             st.subheader("Historial Detallado")
-            st.dataframe(df_v[['fecha_venta', 'producto', 'cantidad', 'precio_total', 'vendedor']], use_container_width=True)
+            # Mostrar fecha formateada bonita
+            df_v['Fecha'] = df_v['fecha_venta'].dt.strftime('%d/%m/%Y %H:%M')
+            st.dataframe(df_v[['Fecha', 'producto', 'cantidad', 'precio_total', 'vendedor']], use_container_width=True)
 
         with t_rep[2]:
             st.subheader("Cancelar Venta")
@@ -210,12 +222,11 @@ elif menu == "Reportes":
             if st.button("Confirmar Anulación"):
                 id_a = int(sel_anul.split(" | ")[0])
                 v_sel = next(i for i in res_v.data if i['id'] == id_a)
-                # Devolver stock
                 p_res = supabase.table("productos").select("stock").eq("codigo", v_sel['codigo_prod']).execute()
                 if p_res.data:
                     n_s = p_res.data[0]['stock'] + v_sel['cantidad']
                     supabase.table("productos").update({"stock": n_s}).eq("codigo", v_sel['codigo_prod']).execute()
                 supabase.table("ventas").delete().eq("id", id_a).execute()
-                st.success("Venta anulada y stock devuelto"); st.rerun()
+                st.success("Venta anulada"); st.rerun()
     else:
         st.info("No hay ventas registradas aún.")

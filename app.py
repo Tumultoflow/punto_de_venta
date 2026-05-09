@@ -130,17 +130,45 @@ if menu == "Ventas":
                 st.success("Venta Registrada")
                 st.rerun()
 
-# --- SECCIÓN: INVENTARIO ---
+# --- SECCIÓN: INVENTARIO (CON BOTONES DE DESCARGA DEVUELTOS) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
-    tabs = st.tabs(["📋 Catálogo", "🆕 Nuevo Producto"])
+    tabs = st.tabs(["📋 Catálogo e Impresión", "🆕 Nuevo Producto"])
     
     with tabs[0]:
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
-            st.dataframe(df_i, column_config={"foto_path": st.column_config.ImageColumn("Foto")}, use_container_width=True)
+            
+            # --- BOTONES DE DESCARGA ---
+            c_desc1, c_desc2 = st.columns(2)
+            with c_desc1:
+                st.download_button(
+                    label="🖼️ Descargar Catálogo con Fotos (HTML)",
+                    data=generar_html_catalogo(df_i),
+                    file_name="catalogo_tumultoflow.html",
+                    mime="text/html",
+                    use_container_width=True
+                )
+            with c_desc2:
+                buf = io.BytesIO()
+                with pd.ExcelWriter(buf, engine='xlsxwriter') as wr:
+                    df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(wr, index=False)
+                st.download_button(
+                    label="📊 Descargar Lista de Precios (Excel)",
+                    data=buf.getvalue(),
+                    file_name="precios_inventario.xlsx",
+                    mime="application/vnd.ms-excel",
+                    use_container_width=True
+                )
+            
+            st.divider()
+            st.dataframe(
+                df_i, 
+                column_config={"foto_path": st.column_config.ImageColumn("Foto")}, 
+                use_container_width=True
+            )
 
     with tabs[1]:
         if st.session_state.role == "admin":
@@ -181,7 +209,7 @@ elif menu == "Configuración":
             if c2.button("🗑️", key=f"conf_{r['id']}"):
                 supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES (CON FUNCIÓN DE REPARAR FECHA) ---
+# --- SECCIÓN: REPORTES ---
 elif menu == "Reportes":
     st.header("📊 Reportes y Gestión")
     t_rep = st.tabs(["📈 Análisis Semanal", "📋 Historial Completo", "🛠️ Corregir o Anular Ventas"])
@@ -190,7 +218,6 @@ elif menu == "Reportes":
     
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        # Limpieza de fechas para análisis
         df_v['fecha_limpia'] = pd.to_datetime(df_v['fecha_venta'], utc=True, errors='coerce').dt.tz_convert('America/Mexico_City')
         df_v['Semana'] = df_v['fecha_limpia'].dt.strftime('%Y - Sem %U').fillna("SIN FECHA")
         
@@ -209,26 +236,22 @@ elif menu == "Reportes":
             id_sel = int(sel_v.split(" | ")[0])
             
             c_edit1, c_edit2 = st.columns(2)
-            
             with c_edit1:
                 st.info("📅 Corregir Fecha")
                 nueva_fecha = st.date_input("Elegir fecha correcta")
                 if st.button("Actualizar Fecha"):
-                    # Poner la fecha elegida con hora 12:00 para que sea neutra
                     fecha_fix = datetime.combine(nueva_fecha, datetime.min.time()).replace(hour=12).isoformat()
                     supabase.table("ventas").update({"fecha_venta": fecha_fix}).eq("id", id_sel).execute()
                     st.success("Fecha actualizada correctamente"); st.rerun()
-            
             with c_edit2:
                 st.warning("🗑️ Eliminar Definitivamente")
                 if st.button("Confirmar Borrado de Venta"):
                     v_data = next(i for i in res_v.data if i['id'] == id_sel)
-                    # Devolver stock
                     p_res = supabase.table("productos").select("stock").eq("codigo", v_data['codigo_prod']).execute()
                     if p_res.data:
                         n_s = p_res.data[0]['stock'] + v_data['cantidad']
                         supabase.table("productos").update({"stock": n_s}).eq("codigo", v_data['codigo_prod']).execute()
                     supabase.table("ventas").delete().eq("id", id_sel).execute()
-                    st.success("Venta eliminada y stock devuelto"); st.rerun()
+                    st.success("Venta eliminada"); st.rerun()
     else:
         st.info("No hay registros.")

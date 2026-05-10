@@ -168,7 +168,6 @@ elif menu == "Inventario":
         res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
-            # --- LÍNEA 171 CORREGIDA: busq_i en lugar de busq_v ---
             if busq_i: 
                 df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
             
@@ -205,35 +204,51 @@ elif menu == "Inventario":
             n_foto = st.file_uploader("Foto", type=["jpg","png","jpeg"])
         with c_n2:
             st.write("**Variantes (Agregar antes de guardar)**")
-            v_c, v_t = st.text_input("Color", key="v_c"), st.text_input("Talla", key="v_t")
-            v_s = st.number_input("Stock Variante", 0, key="v_s")
-            if st.button("➕ Añadir Variante"):
+            v_c = st.text_input("Color", key="v_color_input")
+            v_t = st.text_input("Talla", key="v_talla_input")
+            v_s = st.number_input("Stock Variante", 0, key="v_stock_input")
+            
+            # --- CORRECCIÓN DEFINITIVA DE BOTÓN AÑADIR ---
+            if st.button("➕ Añadir Variante", use_container_width=True):
                 if v_c and v_t:
-                    v_c_up, v_t_up = v_c.upper(), v_t.upper()
-                    if v_c_up not in st.session_state.temp_matriz: st.session_state.temp_matriz[v_c_up] = {}
-                    st.session_state.temp_matriz[v_c_up][v_t_up] = v_s
-            st.write("Estructura actual:", {k:v for k,v in st.session_state.temp_matriz.items() if k != "_info_extra"})
+                    c_up, t_up = v_c.upper().strip(), v_t.upper().strip()
+                    if c_up not in st.session_state.temp_matriz:
+                        st.session_state.temp_matriz[c_up] = {}
+                    st.session_state.temp_matriz[c_up][t_up] = int(v_s)
+                    st.toast(f"Añadido: {c_up} - {t_up}")
+                else:
+                    st.warning("Escribe el Color y la Talla")
+
+            st.write("Variantes en memoria:")
+            st.json({k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"})
+            
+            if st.button("🗑️ Limpiar Variantes"):
+                st.session_state.temp_matriz = {}
+                st.rerun()
 
         if st.button("🚀 GUARDAR PRODUCTO", use_container_width=True, type="primary"):
-            if not st.session_state.temp_matriz:
-                st.error("Agrega al menos una variante (Color/Talla) antes de guardar.")
+            # Filtramos para no contar el campo _info_extra en la validación
+            validas = {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"}
+            if not validas:
+                st.error("❌ No has añadido ninguna variante.")
             else:
                 url = subir_imagen_supabase(n_foto, n_sku)
                 st.session_state.temp_matriz["_info_extra"] = n_desc
-                total_stock = sum(int(q) for c, t in st.session_state.temp_matriz.items() if c != "_info_extra" for q in t.values())
+                total_stock = sum(int(q) for c, t in validas.items() for q in t.values())
                 
                 supabase.table("productos").insert({
                     "codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, 
                     "stock": total_stock, "descripcion": json.dumps(st.session_state.temp_matriz), 
                     "categoria": n_cat, "subcategoria": n_sub, "foto_path": url
                 }).execute()
-                st.session_state.temp_matriz = {}; st.success(f"Guardado con stock: {total_stock}"); st.rerun()
+                st.session_state.temp_matriz = {}
+                st.success(f"✅ ¡Guardado con stock total de {total_stock}!"); st.rerun()
 
     with t3:
         if st.session_state.edit_id:
             res_e = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute()
             if not res_e.data:
-                st.error("El producto seleccionado ya no existe.")
+                st.error("No existe.")
                 st.session_state.edit_id = None
                 if st.button("Volver"): st.rerun()
             else:
@@ -252,13 +267,15 @@ elif menu == "Inventario":
                     e_foto = st.file_uploader("Nueva Foto", type=["jpg","png","jpeg"])
                 with ce2:
                     st.write("**Variantes**")
-                    ex_c, ex_t = st.text_input("Color", key="ex_c"), st.text_input("Talla", key="ex_t")
+                    ex_c = st.text_input("Color", key="ex_c")
+                    ex_t = st.text_input("Talla", key="ex_t")
                     ex_s = st.number_input("Stock", 0, key="ex_s")
-                    if st.button("Actualizar"):
+                    if st.button("Actualizar/Añadir"):
                         if ex_c and ex_t:
-                            c_u, t_u = ex_c.upper(), ex_t.upper()
+                            c_u, t_u = ex_c.upper().strip(), ex_t.upper().strip()
                             if c_u not in st.session_state.temp_matriz: st.session_state.temp_matriz[c_u] = {}
-                            st.session_state.temp_matriz[c_u][t_u] = ex_s
+                            st.session_state.temp_matriz[c_u][t_u] = int(ex_s)
+                            st.rerun()
                     st.divider()
                     for cn, tallas in list(st.session_state.temp_matriz.items()):
                         if cn != "_info_extra":
@@ -282,19 +299,19 @@ elif menu == "Inventario":
                 if b2.button("Cancelar", use_container_width=True): st.session_state.edit_id = None; st.rerun()
                 if st.session_state.role == "admin" and b3.button("🗑️ BORRAR", type="secondary", use_container_width=True):
                     supabase.table("productos").delete().eq("id", st.session_state.edit_id).execute(); st.session_state.edit_id = None; st.rerun()
-        else: st.info("Selecciona un producto de la pestaña 'Lista'.")
+        else: st.info("Selecciona un producto en 'Lista'.")
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
     opciones_config = {"CATEGORÍAS": "categoria", "SUBCATEGORÍAS": "subcategoria", "VENDEDORES": "vendedor", "MÉTODOS DE PAGO": "metodo_pago"}
-    tab_n = st.selectbox("Seleccione qué desea configurar:", list(opciones_config.keys()))
+    tab_n = st.selectbox("Seleccione:", list(opciones_config.keys()))
     tipo_db = opciones_config[tab_n]
     
     with st.container(border=True):
         c1, c2 = st.columns([3, 1])
         nuevo_valor = c1.text_input(f"Añadir nuevo a {tab_n}:").upper()
-        if c2.button("➕ Añadir", use_container_width=True):
+        if c2.button("➕ Añadir"):
             if nuevo_valor:
                 supabase.table("configuracion").insert({"tipo": tipo_db, "valor": nuevo_valor}).execute(); st.rerun()
     

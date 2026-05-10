@@ -87,6 +87,7 @@ if menu == "Ventas":
         c1, c2 = st.columns([1, 2])
         with c1:
             if item.get('foto_path'): st.image(item['foto_path'], width=200)
+            if item.get('descripcion'): st.caption(f"📝 {item['descripcion']}")
         with c2:
             v_cant = st.number_input("Cantidad", 1, int(item['stock']))
             v_pre = st.number_input("Precio unitario", value=float(item['precio_pub']))
@@ -161,6 +162,8 @@ elif menu == "Inventario":
                 col = st.columns(cols_h)
                 if r['foto_path']: col[0].image(r['foto_path'], width=60)
                 col[1].write(f"**{r['codigo']}** - {r['nombre']} ({r.get('color', 'N/A')}/{r.get('piezas', 'N/A')})")
+                if r.get('descripcion'): col[1].caption(r['descripcion'])
+                
                 col[2].write(f"{r['stock']}")
                 col[3].write(f"${r['precio_pub']:,.2f}")
                 
@@ -185,8 +188,9 @@ elif menu == "Inventario":
                 sku_sugerido = generar_sku(n_cat, n_sub)
                 n_sku = st.text_input("Código", value=sku_sugerido, key=f"sku_input_{sku_sugerido}")
                 n_nom = st.text_input("Nombre", key="n_nom_inp")
-                n_color = st.text_input("Color", key="n_color_inp")
+                n_desc = st.text_area("Descripción", key="n_desc_inp", help="Detalles del producto")
             with c_n2:
+                n_color = st.text_input("Color", key="n_color_inp")
                 n_piezas = st.text_input("Talle / Piezas", key="n_pz_inp")
                 n_pub = st.number_input("Precio Venta", 0.0, key="n_pub_inp")
                 n_inv = st.number_input("Precio Costo", 0.0, key="n_inv_inp")
@@ -204,8 +208,9 @@ elif menu == "Inventario":
                         supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
                         url = supabase.storage.from_("fotos").get_public_url(fn)
                         supabase.table("productos").insert({
-                            "codigo": n_sku.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
-                            "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
+                            "codigo": n_sku.upper(), "nombre": n_nom, "descripcion": n_desc, 
+                            "categoria": n_cat, "subcategoria": n_sub, "precio_inv": n_inv, 
+                            "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
                             "color": n_color, "piezas": n_piezas
                         }).execute()
                         st.success(f"Producto {n_sku} guardado con éxito")
@@ -220,6 +225,7 @@ elif menu == "Inventario":
                 p_edit = res_e.data[0]
                 st.subheader(f"Editando: {p_edit['codigo']}")
                 e_nom = st.text_input("Nombre", value=p_edit['nombre'], key="e_nom_edit")
+                e_desc = st.text_area("Descripción", value=p_edit.get('descripcion', ''), key="e_desc_edit")
                 e_color = st.text_input("Color", value=p_edit.get('color', ''), key="e_col_edit")
                 e_piezas = st.text_input("Talle/Piezas", value=p_edit.get('piezas', ''), key="e_pz_edit")
                 e_pub = st.number_input("Precio Venta", value=float(p_edit['precio_pub']), key="e_pub_edit")
@@ -230,7 +236,7 @@ elif menu == "Inventario":
                 if c_eb1.button("💾 Guardar Cambios", type="primary", key="e_save_btn"):
                     try:
                         supabase.table("productos").update({
-                            "nombre": e_nom, "color": e_color, "piezas": e_piezas,
+                            "nombre": e_nom, "descripcion": e_desc, "color": e_color, "piezas": e_piezas,
                             "precio_pub": e_pub, "precio_inv": e_inv, "stock": e_stk
                         }).eq("id", st.session_state.edit_id).execute()
                         st.session_state.edit_id = None

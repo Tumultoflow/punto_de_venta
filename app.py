@@ -55,13 +55,13 @@ with st.sidebar:
         st.session_state.auth = False
         st.rerun()
 
-# --- SECCIÓN: VENTAS (MANTENIDA) ---
+# --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
     if res.data:
         df_p = pd.DataFrame(res.data)
-        busq = st.text_input("🔍 Buscar...")
+        busq = st.text_input("🔍 Buscar por nombre o código...")
         if busq: df_p = df_p[df_p['nombre'].str.contains(busq, case=False) | df_p['codigo'].str.contains(busq, case=False)]
         
         if not df_p.empty:
@@ -73,8 +73,16 @@ if menu == "Ventas":
             with c1:
                 if item.get('foto_path'): st.image(item['foto_path'], width=200)
             with c2:
-                try: matriz = json.loads(item['descripcion']) if item['descripcion'] and item['descripcion'].startswith('{') else None
-                except: matriz = None
+                # Mostrar descripción si existe en la matriz
+                try: 
+                    data_desc = json.loads(item['descripcion'])
+                    texto_desc = data_desc.get("_info_extra", "Sin descripción")
+                    matriz = {k: v for k, v in data_desc.items() if k != "_info_extra"}
+                except: 
+                    texto_desc = "Sin descripción"
+                    matriz = None
+
+                st.info(f"**Descripción:** {texto_desc}")
 
                 if matriz:
                     v_col = st.selectbox("Color", list(matriz.keys()))
@@ -110,10 +118,10 @@ if menu == "Ventas":
         if c_v2.button("🚀 FINALIZAR VENTA", type="primary"):
             for p in st.session_state.carrito:
                 prod_db = supabase.table("productos").select("*").eq("id", p['id']).execute().data[0]
+                full_desc = json.loads(prod_db['descripcion'])
                 if p['es_matriz']:
-                    m_act = json.loads(prod_db['descripcion'])
-                    m_act[p['Color']][p['Talla']] -= p['Cantidad']
-                    supabase.table("productos").update({"stock": prod_db['stock']-p['Cantidad'], "descripcion": json.dumps(m_act)}).eq("id", p['id']).execute()
+                    full_desc[p['Color']][p['Talla']] -= p['Cantidad']
+                    supabase.table("productos").update({"stock": prod_db['stock']-p['Cantidad'], "descripcion": json.dumps(full_desc)}).eq("id", p['id']).execute()
                 else:
                     supabase.table("productos").update({"stock": prod_db['stock']-p['Cantidad']}).eq("id", p['id']).execute()
                 
@@ -125,7 +133,7 @@ if menu == "Ventas":
                 }).execute()
             st.session_state.carrito = []; st.success("Venta realizada"); st.rerun()
 
-# --- SECCIÓN: INVENTARIO (CORREGIDA) ---
+# --- SECCIÓN: INVENTARIO (CON DESCRIPCIÓN) ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
@@ -138,11 +146,19 @@ elif menu == "Inventario":
             for _, r in df_i.iterrows():
                 c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
                 if r['foto_path']: c_im.image(r['foto_path'], width=80)
-                c_tx.write(f"**{r['codigo']}** - {r['nombre']} (Stock: {r['stock']})")
+                
+                # Extraer descripción del JSON
+                try: d_json = json.loads(r['descripcion'])
+                except: d_json = {}
+                desc_lista = d_json.get("_info_extra", "Sin descripción")
+                
+                c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
+                c_tx.write(f"_{desc_lista}_")
+                c_tx.caption(f"Stock: {r['stock']} | P. Público: ${r['precio_pub']}")
+                
                 if c_ac1.button("✏️", key=f"ed_btn_{r['id']}"):
                     st.session_state.edit_id = r['id']
-                    try: st.session_state.temp_matriz = json.loads(r['descripcion'])
-                    except: st.session_state.temp_matriz = {}
+                    st.session_state.temp_matriz = d_json
                     st.rerun()
                 if c_ac2.button("🗑️", key=f"del_btn_{r['id']}"):
                     supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
@@ -155,6 +171,7 @@ elif menu == "Inventario":
             n_sub = st.selectbox("Subcategoría", subs, key="reg_sub")
             n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub), key="reg_sku")
             n_nom = st.text_input("Nombre Producto", key="reg_nom")
+            n_desc = st.text_area("Descripción del Producto", placeholder="Ej: Material, marca, detalles específicos...", key="reg_desc")
             n_pub = st.number_input("Precio Público", 0.0, key="reg_pub")
             n_inv = st.number_input("Precio Proveedor", 0.0, key="reg_inv")
             n_foto = st.file_uploader("Imagen", key="reg_foto")
@@ -167,11 +184,12 @@ elif menu == "Inventario":
                 if m_col and m_tal:
                     if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
                     st.session_state.temp_matriz[m_col][m_tal] = m_can
-            st.write("Variantes actuales:", st.session_state.temp_matriz)
+            st.write("Variantes actuales:", {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"})
             if st.button("Limpiar Variantes", key="btn_clr_reg"): st.session_state.temp_matriz = {}
         
         if st.button("🚀 GUARDAR PRODUCTO NUEVO"):
-            total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
+            st.session_state.temp_matriz["_info_extra"] = n_desc
+            total_stk = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
             url = ""
             if n_foto:
                 fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
@@ -188,10 +206,17 @@ elif menu == "Inventario":
         if st.session_state.edit_id:
             p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
             st.subheader(f"Editando: {p['codigo']}")
+            
+            # Cargar descripción actual
+            try: cur_matriz = json.loads(p['descripcion'])
+            except: cur_matriz = {}
+            cur_desc = cur_matriz.get("_info_extra", "")
+
             c_e1, c_e2 = st.columns(2)
             with c_e1:
                 e_sku = st.text_input("SKU", value=p['codigo'], key="edit_sku")
                 e_nom = st.text_input("Nombre", value=p['nombre'], key="edit_nom")
+                e_desc = st.text_area("Descripción", value=cur_desc, key="edit_desc")
                 e_cat = st.selectbox("Categoría", cats, index=cats.index(p['categoria']) if p['categoria'] in cats else 0, key="edit_cat")
                 e_sub = st.selectbox("Subcategoría", subs, index=subs.index(p['subcategoria']) if p['subcategoria'] in subs else 0, key="edit_sub")
                 e_pub = st.number_input("P. Público", value=float(p['precio_pub']), key="edit_pub")
@@ -200,7 +225,7 @@ elif menu == "Inventario":
                 if p['foto_path']: st.image(p['foto_path'], width=100)
                 e_foto = st.file_uploader("Cambiar Imagen", key="edit_foto")
                 st.write("**Editar Variantes**")
-                st.write(st.session_state.temp_matriz)
+                st.write({k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"})
                 m_col_e = st.text_input("Color", key="mc_edit")
                 m_tal_e = st.text_input("Talla", key="mt_edit")
                 m_can_e = st.number_input("Stock", 0, key="mq_edit")
@@ -208,10 +233,11 @@ elif menu == "Inventario":
                     if m_col_e and m_tal_e:
                         if m_col_e not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col_e] = {}
                         st.session_state.temp_matriz[m_col_e][m_tal_e] = m_can_e
-                if st.button("Resetear Variantes", key="btn_clr_edit"): st.session_state.temp_matriz = {}
+                if st.button("Resetear Variantes", key="btn_clr_edit"): st.session_state.temp_matriz = {"_info_extra": e_desc}
 
             if st.button("💾 GUARDAR TODOS LOS CAMBIOS"):
-                total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
+                st.session_state.temp_matriz["_info_extra"] = e_desc
+                total_stk = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
                 upd = {"codigo": e_sku, "nombre": e_nom, "categoria": e_cat, "subcategoria": e_sub, 
                        "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_stk, "descripcion": json.dumps(st.session_state.temp_matriz)}
                 if e_foto:
@@ -223,7 +249,7 @@ elif menu == "Inventario":
             if st.button("Cancelar"): st.session_state.edit_id = None; st.rerun()
         else: st.info("Usa el lápiz ✏️ en la lista.")
 
-# --- SECCIONES RESTANTES ---
+# --- SECCIONES CONFIG Y REPORTES ---
 elif menu == "Configuración":
     st.header("⚙️ Configuración")
     tipo_cfg = st.selectbox("Tipo", ["categoria", "subcategoria"], key="cfg_tipo")

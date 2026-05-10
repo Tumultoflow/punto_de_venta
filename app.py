@@ -13,9 +13,10 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
-# --- CSS PARA LA APP ---
+# --- CSS PARA LA APP Y MODO IMPRESIÓN ---
 st.markdown("""
     <style>
+    /* Estilos de la App */
     .product-card {
         border: 2px solid #f0f2f6;
         padding: 15px;
@@ -23,11 +24,20 @@ st.markdown("""
         text-align: center;
         background-color: white;
         margin-bottom: 20px;
-        transition: transform 0.2s;
     }
-    .product-card:hover { transform: scale(1.02); border-color: #2e7d32; }
     .product-name { font-weight: bold; font-size: 1.1em; margin: 10px 0; color: #1f1f1f; }
     .product-price { color: #2e7d32; font-weight: 800; font-size: 1.5em; background: #e8f5e9; padding: 5px 10px; border-radius: 8px; display: inline-block; }
+    
+    /* Ocultar elementos en impresión normal */
+    @media print {
+        .no-print, header, footer, .stSidebar, .stTabs, .stButton, div[data-testid="stToolbar"] {
+            display: none !important;
+        }
+        .print-only {
+            display: block !important;
+        }
+    }
+    .print-only { display: none; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -163,13 +173,12 @@ if menu == "Ventas":
                 }).execute()
             st.session_state.carrito = []; st.success("Venta realizada"); st.rerun()
 
-# --- SECCIÓN: INVENTARIO (CON RESTRICCIONES) ---
+# --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Inventario y Catálogo")
     tabs_opc = ["📋 Lista", "🆕 Registrar Nuevo", "✏️ Editor", "🖨️ Catálogo"] if st.session_state.role == "admin" else ["📋 Lista", "🖨️ Catálogo"]
     pest = st.tabs(tabs_opc)
 
-    # 📋 LISTA (TODOS)
     with pest[0]:
         busq_i = st.text_input("🔍 Buscar...", key="search_inv")
         res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -192,9 +201,8 @@ elif menu == "Inventario":
                         supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
                 st.divider()
 
-    # PESTAÑAS ADMIN
     if st.session_state.role == "admin":
-        with pest[1]: # Registrar
+        with pest[1]:
             c1, c2 = st.columns(2)
             cats = [c['valor'] for c in obtener_config("categoria")] or ["GENERAL"]
             subs = [s['valor'] for s in obtener_config("subcategoria")] or ["GENERAL"]
@@ -209,8 +217,7 @@ elif menu == "Inventario":
                 st.write("**Variantes**")
                 vc, vt, vs = st.text_input("Color"), st.text_input("Talla"), st.number_input("Stock", 0)
                 if st.button("➕ Añadir"):
-                    if vc and vt:
-                        st.session_state.temp_matriz.setdefault(vc.upper().strip(), {})[vt.upper().strip()] = int(vs)
+                    if vc and vt: st.session_state.temp_matriz.setdefault(vc.upper().strip(), {})[vt.upper().strip()] = int(vs)
                 st.json(st.session_state.temp_matriz)
             if st.button("🚀 GUARDAR PRODUCTO", type="primary"):
                 v_ok = {k:v for k,v in st.session_state.temp_matriz.items() if k != "_info_extra"}
@@ -221,7 +228,7 @@ elif menu == "Inventario":
                     supabase.table("productos").insert({"codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, "stock": tot, "descripcion": json.dumps(st.session_state.temp_matriz), "categoria": n_cat, "subcategoria": n_sub, "foto_path": url}).execute()
                     st.session_state.temp_matriz = {}; st.rerun()
 
-        with pest[2]: # Editor
+        with pest[2]:
             if st.session_state.edit_id:
                 p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
                 ce1, ce2 = st.columns(2)
@@ -251,46 +258,46 @@ elif menu == "Inventario":
                     supabase.table("productos").update({"nombre": enom, "precio_pub": epub, "precio_inv": einv, "stock": tot_e, "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url}).eq("id", st.session_state.edit_id).execute()
                     st.session_state.edit_id = None; st.rerun()
 
-    # 🖨️ CATÁLOGO (TODOS)
+    # --- PESTAÑA CATÁLOGO (CORREGIDA) ---
     idx_cat = 3 if st.session_state.role == "admin" else 1
     with pest[idx_cat]:
         st.subheader("🖼️ Catálogo de Precios")
         res_cat = supabase.table("productos").select("codigo, nombre, precio_pub, foto_path").order("nombre").execute()
         if res_cat.data:
-            # Lógica de impresión en ventana nueva
-            html_items = ""
-            for r in res_cat.data:
-                f_url = r.get('foto_path') or "https://via.placeholder.com/150"
-                html_items += f"""
-                <div style="display: inline-block; width: 180px; border: 1px solid #eee; padding: 10px; margin: 5px; text-align: center; font-family: sans-serif; background: #fff; border-radius: 8px;">
-                    <img src="{f_url}" style="width: 150px; height: 150px; object-fit: contain;">
-                    <div style="font-size: 10px; color: #666; margin-top: 5px;">{r['codigo']}</div>
-                    <div style="font-weight: bold; font-size: 14px; height: 35px; overflow: hidden; margin: 5px 0;">{r['nombre']}</div>
-                    <div style="color: #2e7d32; font-weight: bold; font-size: 18px;">${r['precio_pub']:,.2f}</div>
-                </div>
-                """
-            
-            if st.button("🖨️ IMPRIMIR CATÁLOGO COMPLETO (PDF)", use_container_width=True, type="primary"):
+            # Botón de impresión directo que no usa pop-ups
+            if st.button("🖨️ PREPARAR IMPRESIÓN (PDF)", use_container_width=True, type="primary"):
+                html_items = "".join([f"""
+                <div style="display:inline-block; width:180px; border:1px solid #eee; padding:10px; margin:5px; text-align:center; font-family:sans-serif;">
+                    <img src="{r.get('foto_path') or ''}" style="width:150px; height:150px; object-fit:contain;">
+                    <div style="font-size:10px; color:#666;">{r['codigo']}</div>
+                    <div style="font-weight:bold; font-size:14px; height:35px; overflow:hidden;">{r['nombre']}</div>
+                    <div style="color:#2e7d32; font-weight:bold; font-size:18px;">${r['precio_pub']:,.2f}</div>
+                </div>""" for r in res_cat.data])
+                
+                # Inyectamos script de impresión directa en el mismo documento
                 st.components.v1.html(f"""
                     <script>
-                        var win = window.open('', '_blank');
-                        win.document.write('<html><head><title>Catálogo Duo Legal</title></head><body style="background:#f9f9f9;">');
-                        win.document.write('<h1 style="text-align:center; font-family:sans-serif; color:#333;">Catálogo de Productos</h1>');
-                        win.document.write('<div style="text-align:center;">{html_items}</div>');
-                        win.document.write('</body></html>');
-                        win.document.close();
-                        setTimeout(function(){{ win.print(); }}, 1000);
+                        var printWindow = window.open('', '_blank');
+                        printWindow.document.write('<html><head><title>Catálogo</title></head><body>');
+                        printWindow.document.write('<h1 style="text-align:center;">Catálogo Duo Legal</h1>');
+                        printWindow.document.write('<div style="text-align:center;">{html_items}</div>');
+                        printWindow.document.write('</body></html>');
+                        printWindow.document.close();
+                        printWindow.onload = function() {{
+                            printWindow.print();
+                        }};
                     </script>
                 """, height=0)
-            
-            st.write("---")
+                st.info("💡 Si no abre, revisa si tu navegador bloqueó la pestaña (arriba a la derecha).")
+
+            st.divider()
             cols = st.columns(4)
             for i, r in enumerate(res_cat.data):
                 with cols[i % 4]:
                     f_url = r.get('foto_path') or "https://via.placeholder.com/150"
                     st.markdown(f"""<div class="product-card"><img src="{f_url}" style="width:100%; height:140px; object-fit:contain;"><div style="color:#666;font-size:0.8em;">{r['codigo']}</div><div class="product-name">{r['nombre'][:35]}</div><div class="product-price">${r['precio_pub']:,.2f}</div></div>""", unsafe_allow_html=True)
 
-# --- CONFIGURACIÓN & REPORTES (SÓLO ADMIN) ---
+# --- CONFIGURACIÓN & REPORTES ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
     opc_c = {"CATEGORÍAS": "categoria", "SUBCATEGORÍAS": "subcategoria", "VENDEDORES": "vendedor", "MÉTODOS DE PAGO": "metodo_pago"}

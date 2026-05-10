@@ -58,19 +58,19 @@ with st.sidebar:
     st.divider()
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.auth = False
+        st.session_state.role = None
+        st.session_state.carrito = []
         st.rerun()
 
 # --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta Detallado")
     
-    # Intento de lectura con manejo de error para el bug de Postgrest
     try:
         res = supabase.table("productos").select("*").gt("stock", 0).execute()
         productos_data = res.data
     except Exception as e:
-        st.error(f"Error al conectar con la base de datos: {e}")
-        st.info("Asegúrate de que la columna 'stock' existe y el RLS está configurado en Supabase.")
+        st.error(f"Error de base de datos: {e}")
         st.stop()
 
     if productos_data:
@@ -120,30 +120,29 @@ if menu == "Ventas":
                         "precio_inv": float(item['precio_inv']),
                         "codigo": item['codigo']
                     })
-                    st.toast("Agregado al carrito")
+                    st.rerun()
 
-    # --- MOSTRAR CARRITO Y OPCIONES DE CANCELACIÓN ---
     if st.session_state.carrito:
         st.divider()
-        st.subheader("🛒 Resumen de Venta")
+        st.subheader("🛒 Artículos en la venta")
         
         for i, p in enumerate(st.session_state.carrito):
             col_txt, col_btn = st.columns([5, 1])
+            # .get() evita el KeyError si hubiera basura de sesiones previas
+            t_id = p.get('temp_id', i)
             col_txt.write(f"**{p['Cantidad']}x {p['Producto']}** | {p['Color']} - {p['Talla']} | ${p['Precio']*p['Cantidad']:,.2f}")
-            if col_btn.button("❌", key=f"del_{p['temp_id']}"):
+            if col_btn.button("❌", key=f"del_{t_id}"):
                 st.session_state.carrito.pop(i)
                 st.rerun()
 
         st.divider()
         c_v1, c_v2 = st.columns(2)
-        
         if c_v1.button("🗑️ CANCELAR TODA LA VENTA", use_container_width=True):
             st.session_state.carrito = []
             st.rerun()
 
         if c_v2.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
             for p in st.session_state.carrito:
-                # Descontar stock
                 prod_db = supabase.table("productos").select("*").eq("id", p['id']).execute().data[0]
                 nuevo_total = prod_db['stock'] - p['Cantidad']
                 if p['es_matriz']:
@@ -153,14 +152,12 @@ if menu == "Ventas":
                 else:
                     supabase.table("productos").update({"stock": nuevo_total}).eq("id", p['id']).execute()
                 
-                # Guardar venta con metadatos en 'color' para permitir anulación precisa
                 meta = json.dumps({"v_col": p['Color'], "v_tal": p['Talla'], "es_matriz": p['es_matriz']})
                 supabase.table("ventas").insert({
                     "producto": p['Producto'], "codigo_prod": p['codigo'], "cantidad": p['Cantidad'],
                     "precio_total": p['Precio'] * p['Cantidad'], "ganancia": (p['Precio'] - p['precio_inv']) * p['Cantidad'],
                     "vendedor": p['Vendedor'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat(), "color": meta
                 }).execute()
-            
             st.session_state.carrito = []
             st.success("Venta realizada"); st.rerun()
 
@@ -203,6 +200,7 @@ elif menu == "Inventario":
                     if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
                     st.session_state.temp_matriz[m_col][m_tal] = m_can
             st.write(st.session_state.temp_matriz)
+            if st.button("Limpiar Variantes"): st.session_state.temp_matriz = {}
         
         if st.button("🚀 Guardar Producto"):
             total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
@@ -269,7 +267,7 @@ elif menu == "Reportes":
             if meta.get('es_matriz'):
                 m_act = json.loads(p_db['descripcion'])
                 m_act[meta['v_col']][meta['v_tal']] += v_info['cantidad']
-                supabase.table("productos").update({"stock": nuevo_total, "descripcion": json.dumps(m_act)}).eq("id", p_db['id']).execute()
+                supabase.table("productos").update({"stock": nuevo_stk, "descripcion": json.dumps(m_act)}).eq("id", p_db['id']).execute()
             else:
                 supabase.table("productos").update({"stock": nuevo_stk}).eq("id", p_db['id']).execute()
             

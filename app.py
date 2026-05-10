@@ -49,6 +49,7 @@ def generar_html_catalogo(df):
 if "auth" not in st.session_state: st.session_state.auth = False
 if "role" not in st.session_state: st.session_state.role = None
 if "carrito" not in st.session_state: st.session_state.carrito = []
+if "edit_id" not in st.session_state: st.session_state.edit_id = None
 
 # --- 4. LOGIN ---
 if not st.session_state.auth:
@@ -130,65 +131,92 @@ if menu == "Ventas":
                 st.success("Venta Registrada")
                 st.rerun()
 
-# --- SECCIÓN: INVENTARIO (CON BOTONES DE DESCARGA DEVUELTOS) ---
+# --- SECCIÓN: INVENTARIO (CON EDICIÓN) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
-    tabs = st.tabs(["📋 Catálogo e Impresión", "🆕 Nuevo Producto"])
+    tabs = st.tabs(["📋 Lista de Productos", "🆕 Nuevo Producto", "✏️ Editar Producto"])
     
     with tabs[0]:
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
             
-            # --- BOTONES DE DESCARGA ---
             c_desc1, c_desc2 = st.columns(2)
             with c_desc1:
-                st.download_button(
-                    label="🖼️ Descargar Catálogo con Fotos (HTML)",
-                    data=generar_html_catalogo(df_i),
-                    file_name="catalogo_tumultoflow.html",
-                    mime="text/html",
-                    use_container_width=True
-                )
+                st.download_button("🖼️ Catálogo con Fotos (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html", use_container_width=True)
             with c_desc2:
-                buf = io.BytesIO()
-                with pd.ExcelWriter(buf, engine='xlsxwriter') as wr:
-                    df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(wr, index=False)
-                st.download_button(
-                    label="📊 Descargar Lista de Precios (Excel)",
-                    data=buf.getvalue(),
-                    file_name="precios_inventario.xlsx",
-                    mime="application/vnd.ms-excel",
-                    use_container_width=True
-                )
+                buf = io.BytesIO(); df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(pd.ExcelWriter(buf, engine='xlsxwriter'), index=False)
+                st.download_button("📊 Lista de Precios (Excel)", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel", use_container_width=True)
             
             st.divider()
-            st.dataframe(
-                df_i, 
-                column_config={"foto_path": st.column_config.ImageColumn("Foto")}, 
-                use_container_width=True
-            )
+            # Mostramos tabla con botón de edición
+            for _, r in df_i.iterrows():
+                col_i1, col_i2, col_i3, col_i4, col_i5 = st.columns([1, 3, 1, 1, 1])
+                if r['foto_path']: col_i1.image(r['foto_path'], width=60)
+                col_i2.write(f"**{r['codigo']}** - {r['nombre']} ({r.get('color', 'N/A')} / {r.get('piezas', 'N/A')})")
+                col_i3.write(f"Stock: {r['stock']}")
+                col_i4.write(f"${r['precio_pub']:,.2f}")
+                if col_i5.button("✏️ Editar", key=f"edit_btn_{r['id']}"):
+                    st.session_state.edit_id = r['id']
+                    st.toast("Cargando datos en pestaña Editar...")
 
     with tabs[1]:
         if st.session_state.role == "admin":
-            n_cat = st.selectbox("Categoría", cats)
-            n_sub = st.selectbox("Subcategoría", subs)
-            n_sku = st.text_input("Código", value=generar_sku(n_cat, n_sub))
-            n_nom = st.text_input("Nombre")
-            n_pub = st.number_input("Precio Venta", 0.0)
-            n_inv = st.number_input("Precio Costo", 0.0)
-            n_stk = st.number_input("Stock", 0)
-            n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'])
-            if st.button("Guardar"):
-                fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
-                supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
-                url = supabase.storage.from_("fotos").get_public_url(fn)
-                supabase.table("productos").insert({
-                    "codigo": n_sku.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
-                    "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url
-                }).execute()
-                st.success("Producto Guardado"); st.rerun()
+            st.subheader("Registrar nuevo ingreso")
+            c_n1, c_n2 = st.columns(2)
+            with c_n1:
+                n_cat = st.selectbox("Categoría", cats)
+                n_sub = st.selectbox("Subcategoría", subs)
+                n_sku = st.text_input("Código", value=generar_sku(n_cat, n_sub))
+                n_nom = st.text_input("Nombre del producto")
+                n_color = st.text_input("Color")
+            with c_n2:
+                n_piezas = st.text_input("Talle / Piezas")
+                n_pub = st.number_input("Precio Venta", 0.0)
+                n_inv = st.number_input("Precio Costo", 0.0)
+                n_stk = st.number_input("Stock", 0)
+                n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'])
+            
+            if st.button("🚀 Guardar Producto"):
+                if n_nom and n_foto:
+                    fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
+                    supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
+                    url = supabase.storage.from_("fotos").get_public_url(fn)
+                    supabase.table("productos").insert({
+                        "codigo": n_sku.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
+                        "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
+                        "color": n_color, "piezas": n_piezas
+                    }).execute()
+                    st.success("Producto Guardado"); st.rerun()
+                else: st.error("Nombre e Imagen son obligatorios")
+
+    with tabs[2]:
+        if st.session_state.edit_id:
+            res_e = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute()
+            if res_e.data:
+                p_edit = res_e.data[0]
+                st.subheader(f"Editando: {p_edit['codigo']}")
+                e_nom = st.text_input("Nombre", value=p_edit['nombre'])
+                e_color = st.text_input("Color", value=p_edit.get('color', ''))
+                e_piezas = st.text_input("Talle/Piezas", value=p_edit.get('piezas', ''))
+                e_pub = st.number_input("Precio Venta", value=float(p_edit['precio_pub']))
+                e_inv = st.number_input("Precio Costo", value=float(p_edit['precio_inv']))
+                e_stk = st.number_input("Stock", value=int(p_edit['stock']))
+                
+                c_eb1, c_eb2 = st.columns(2)
+                if c_eb1.button("💾 Guardar Cambios", type="primary"):
+                    supabase.table("productos").update({
+                        "nombre": e_nom, "color": e_color, "piezas": e_piezas,
+                        "precio_pub": e_pub, "precio_inv": e_inv, "stock": e_stk
+                    }).eq("id", st.session_state.edit_id).execute()
+                    st.session_state.edit_id = None
+                    st.success("Cambios aplicados"); st.rerun()
+                if c_eb2.button("❌ Cancelar"):
+                    st.session_state.edit_id = None
+                    st.rerun()
+        else:
+            st.info("Selecciona un producto en la lista para editarlo.")
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración":

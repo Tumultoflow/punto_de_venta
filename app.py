@@ -41,9 +41,7 @@ def subir_imagen_supabase(archivo, sku):
     try:
         extension = archivo.name.split(".")[-1]
         nombre_archivo = f"{sku}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{extension}"
-        # Subir al bucket 'fotos'
         supabase.storage.from_('fotos').upload(nombre_archivo, archivo.getvalue())
-        # Retornar URL pública
         return supabase.storage.from_('fotos').get_public_url(nombre_archivo)
     except Exception as e:
         st.error(f"Error al subir imagen: {e}")
@@ -85,7 +83,7 @@ if menu == "Ventas":
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
     if res.data:
         df_p = pd.DataFrame(res.data)
-        busq_v = st.text_input("🔍 Buscar para vender (Nombre o Código)...")
+        busq_v = st.text_input("🔍 Buscar para vender...")
         if busq_v: df_p = df_p[df_p['nombre'].str.contains(busq_v, case=False) | df_p['codigo'].str.contains(busq_v, case=False)]
         
         if not df_p.empty:
@@ -96,7 +94,6 @@ if menu == "Ventas":
             c1, c2 = st.columns([1, 2])
             with c1:
                 if item.get('foto_path'): st.image(item['foto_path'], width=250)
-                else: st.info("Sin imagen")
             with c2:
                 data_desc = cargar_json_seguro(item['descripcion'])
                 matriz = {k: v for k, v in data_desc.items() if k != "_info_extra"}
@@ -166,15 +163,21 @@ elif menu == "Inventario":
             if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
             
             for _, r in df_i.iterrows():
-                c_im, c_tx, c_ac = st.columns([1, 4, 1])
+                c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
                 if r['foto_path']: c_im.image(r['foto_path'], width=80)
                 c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
                 c_tx.caption(f"Stock: {r['stock']} | Cat: {r['categoria']} | Sub: {r.get('subcategoria', 'N/A')}")
                 
-                if c_ac.button("✏️ Editar", key=f"ed_l_{r['id']}"):
+                if c_ac1.button("✏️", key=f"ed_l_{r['id']}"):
                     st.session_state.edit_id = r['id']
                     st.session_state.temp_matriz = cargar_json_seguro(r['descripcion'])
                     st.rerun()
+                
+                # BOTÓN DE BORRADO EN LISTA (SOLO ADMIN)
+                if st.session_state.role == "admin":
+                    if c_ac2.button("🗑️", key=f"del_l_{r['id']}"):
+                        supabase.table("productos").delete().eq("id", r['id']).execute()
+                        st.success(f"Producto {r['codigo']} eliminado."); st.rerun()
                 st.divider()
 
     with t2:
@@ -187,7 +190,6 @@ elif menu == "Inventario":
             n_pub = st.number_input("Precio Público", 0.0)
             n_inv = st.number_input("Precio Inversión", 0.0) if st.session_state.role == "admin" else 0.0
             n_desc = st.text_area("Descripción/Notas")
-            # --- CÁMARA / GALERÍA ---
             n_foto = st.file_uploader("Tomar Foto o Seleccionar de Galería", type=["jpg","png","jpeg"])
         with c_n2:
             st.write("**Variantes (Talla/Color)**")
@@ -214,16 +216,15 @@ elif menu == "Inventario":
     with t3:
         if st.session_state.edit_id:
             p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
-            st.subheader(f"Editando: {p['codigo']}")
+            st.subheader(f"Editor Maestro: {p['codigo']}")
             ce1, ce2 = st.columns(2)
             with ce1:
                 e_nom = st.text_input("Nombre", p['nombre'])
                 e_pub = st.number_input("P. Público", value=float(p['precio_pub']))
                 e_inv = st.number_input("P. Inversión", value=float(p['precio_inv'])) if st.session_state.role == "admin" else float(p['precio_inv'])
                 e_desc = st.text_area("Descripción", value=st.session_state.temp_matriz.get("_info_extra", ""))
-                # --- ACTUALIZAR FOTO ---
                 if p['foto_path']: st.image(p['foto_path'], width=150)
-                e_foto = st.file_uploader("Cambiar Foto (Cámara/Galería)", type=["jpg","png","jpeg"])
+                e_foto = st.file_uploader("Cambiar Foto", type=["jpg","png","jpeg"])
             with ce2:
                 st.write("**Variantes**")
                 ex_c = st.text_input("Nuevo Color", key="exc")
@@ -239,25 +240,33 @@ elif menu == "Inventario":
                         for tn, qs in list(tallas.items()):
                             r1, r2 = st.columns([3, 1])
                             r1.write(f"{cn} - {tn}: {qs}")
-                            if r2.button("🗑️", key=f"del_{cn}_{tn}"):
+                            if r2.button("🗑️", key=f"del_v_{cn}_{tn}"):
                                 del st.session_state.temp_matriz[cn][tn]
                                 if not st.session_state.temp_matriz[cn]: del st.session_state.temp_matriz[cn]
                                 st.rerun()
 
-            if st.button("💾 GUARDAR CAMBIOS MAESTROS", type="primary", use_container_width=True):
+            col_btn1, col_btn2, col_btn3 = st.columns(3)
+            if col_btn1.button("💾 GUARDAR", type="primary", use_container_width=True):
                 nueva_url = subir_imagen_supabase(e_foto, p['codigo']) or p['foto_path']
                 st.session_state.temp_matriz["_info_extra"] = e_desc
                 total_stk = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
                 supabase.table("productos").update({
-                    "nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, 
-                    "stock": total_stk, "descripcion": json.dumps(st.session_state.temp_matriz),
-                    "foto_path": nueva_url
+                    "nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_stk, 
+                    "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": nueva_url
                 }).eq("id", st.session_state.edit_id).execute()
                 st.session_state.edit_id = None; st.session_state.temp_matriz = {}; st.rerun()
-            if st.button("Cancelar"): st.session_state.edit_id = None; st.rerun()
+            
+            if col_btn2.button("Cancelar", use_container_width=True):
+                st.session_state.edit_id = None; st.session_state.temp_matriz = {}; st.rerun()
+
+            # BOTÓN DE BORRAR DENTRO DEL EDITOR (SOLO ADMIN)
+            if st.session_state.role == "admin":
+                if col_btn3.button("🗑️ BORRAR PRODUCTO", type="secondary", use_container_width=True):
+                    supabase.table("productos").delete().eq("id", st.session_state.edit_id).execute()
+                    st.session_state.edit_id = None; st.session_state.temp_matriz = {}; st.success("Eliminado."); st.rerun()
         else: st.info("Selecciona un producto de la Lista.")
 
-# --- SECCIÓN: CONFIGURACIÓN (SÓLO ADMIN) ---
+# --- (SECCIONES DE CONFIGURACIÓN Y REPORTES SIN CAMBIOS) ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
     tipo = st.selectbox("Dato a configurar", ["categoria", "subcategoria", "vendedor", "metodo_pago"])
@@ -270,7 +279,6 @@ elif menu == "Configuración" and st.session_state.role == "admin":
         if cl2.button("🗑️", key=f"d_{item['id']}"):
             supabase.table("configuracion").delete().eq("id", item['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES (SÓLO ADMIN) ---
 elif menu == "Reportes" and st.session_state.role == "admin":
     st.header("📊 Reportes")
     f1, f2 = st.columns(2)

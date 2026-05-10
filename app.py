@@ -81,22 +81,30 @@ if menu == "Ventas":
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
     if res.data:
         df_p = pd.DataFrame(res.data)
-        sel = st.selectbox("Producto", [f"{r['codigo']} - {r['nombre']}" for r in res.data])
-        item = df_p[df_p['codigo'] == sel.split(" - ")[0]].iloc[0]
+        # Buscador rápido para ventas
+        busqueda_v = st.text_input("🔍 Buscar producto para vender...", placeholder="Escribe código o nombre")
+        if busqueda_v:
+            df_p = df_p[df_p.apply(lambda r: busqueda_v.lower() in str(r['nombre']).lower() or busqueda_v.lower() in str(r['codigo']).lower(), axis=1)]
         
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            if item.get('foto_path'): st.image(item['foto_path'], width=200)
-            if item.get('descripcion'): st.caption(f"📝 {item['descripcion']}")
-        with c2:
-            v_cant = st.number_input("Cantidad", 1, int(item['stock']))
-            v_pre = st.number_input("Precio unitario", value=float(item['precio_pub']))
-            if st.button("➕ Agregar al Carrito"):
-                st.session_state.carrito.append({
-                    "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
-                    "cantidad": v_cant, "precio": v_pre, "precio_inv": float(item['precio_inv'])
-                })
-                st.toast(f"Agregado: {item['nombre']}")
+        if not df_p.empty:
+            sel = st.selectbox("Seleccionar Producto", [f"{r['codigo']} - {r['nombre']}" for _, r in df_p.iterrows()])
+            item = df_p[df_p['codigo'] == sel.split(" - ")[0]].iloc[0]
+            
+            c1, c2 = st.columns([1, 2])
+            with c1:
+                if item.get('foto_path'): st.image(item['foto_path'], width=200)
+                if item.get('descripcion'): st.caption(f"📝 {item['descripcion']}")
+            with c2:
+                v_cant = st.number_input("Cantidad", 1, int(item['stock']))
+                v_pre = st.number_input("Precio unitario", value=float(item['precio_pub']))
+                if st.button("➕ Agregar al Carrito"):
+                    st.session_state.carrito.append({
+                        "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
+                        "cantidad": v_cant, "precio": v_pre, "precio_inv": float(item['precio_inv'])
+                    })
+                    st.toast(f"Agregado: {item['nombre']}")
+        else:
+            st.warning("No se encontraron productos con ese criterio.")
 
         if st.session_state.carrito:
             st.divider()
@@ -139,9 +147,22 @@ elif menu == "Inventario":
     tabs = st.tabs(["📋 Lista de Productos", "🆕 Nuevo Producto", "✏️ Editar Producto"])
     
     with tabs[0]:
+        # --- BUSCADOR DE INVENTARIO ---
+        busqueda_i = st.text_input("🔍 Buscar en inventario...", placeholder="Escribe el código, nombre o descripción para filtrar...")
+        
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
+            
+            # Aplicar filtro si hay búsqueda
+            if busqueda_i:
+                df_i = df_i[df_i.apply(lambda r: 
+                    busqueda_i.lower() in str(r['nombre']).lower() or 
+                    busqueda_i.lower() in str(r['codigo']).lower() or 
+                    busqueda_i.lower() in str(r.get('descripcion', '')).lower() or
+                    busqueda_i.lower() in str(r.get('color', '')).lower(), 
+                axis=1)]
+
             c_desc1, c_desc2 = st.columns(2)
             with c_desc1:
                 st.download_button("🖼️ Catálogo Fotos (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html", use_container_width=True, key="dl_cat_inv")
@@ -152,7 +173,7 @@ elif menu == "Inventario":
             st.divider()
             cols_h = [1, 3, 1, 1, 1, 1] if st.session_state.role == "admin" else [1, 3, 1, 1, 1]
             h = st.columns(cols_h)
-            h[1].write("**Producto**")
+            h[1].write("**Producto / Descripción**")
             h[2].write("**Stock**")
             h[3].write("**P. Público**")
             if st.session_state.role == "admin": h[4].write("**P. Costo**")
@@ -162,7 +183,7 @@ elif menu == "Inventario":
                 col = st.columns(cols_h)
                 if r['foto_path']: col[0].image(r['foto_path'], width=60)
                 col[1].write(f"**{r['codigo']}** - {r['nombre']} ({r.get('color', 'N/A')}/{r.get('piezas', 'N/A')})")
-                if r.get('descripcion'): col[1].caption(r['descripcion'])
+                if r.get('descripcion'): col[1].caption(f"📝 {r['descripcion']}")
                 
                 col[2].write(f"{r['stock']}")
                 col[3].write(f"${r['precio_pub']:,.2f}")
@@ -188,7 +209,7 @@ elif menu == "Inventario":
                 sku_sugerido = generar_sku(n_cat, n_sub)
                 n_sku = st.text_input("Código", value=sku_sugerido, key=f"sku_input_{sku_sugerido}")
                 n_nom = st.text_input("Nombre", key="n_nom_inp")
-                n_desc = st.text_area("Descripción", key="n_desc_inp", help="Detalles del producto")
+                n_desc = st.text_area("Descripción", key="n_desc_inp")
             with c_n2:
                 n_color = st.text_input("Color", key="n_color_inp")
                 n_piezas = st.text_input("Talle / Piezas", key="n_pz_inp")
@@ -198,10 +219,8 @@ elif menu == "Inventario":
                 n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'], key="n_foto_inp")
             
             if st.button("🚀 Guardar Producto", key="btn_save_final"):
-                if not n_nom:
-                    st.error("Debes escribir un nombre para el producto.")
-                elif not n_foto:
-                    st.error("Debes subir una imagen para el producto.")
+                if not n_nom or not n_foto:
+                    st.warning("Nombre e Imagen son obligatorios.")
                 else:
                     try:
                         fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"

@@ -182,9 +182,12 @@ elif menu == "Inventario":
             with c_n1:
                 n_cat = st.selectbox("Categoría", cats, key="n_cat_sel")
                 n_sub = st.selectbox("Subcategoría", subs, key="n_sub_sel")
-                # GENERACIÓN DINÁMICA DE SKU
+                
+                # --- AQUÍ ESTÁ EL ARREGLO PARA EL CÓDIGO AUTOMÁTICO ---
                 sku_sugerido = generar_sku(n_cat, n_sub)
-                n_sku = st.text_input("Código", value=sku_sugerido, key="n_sku_inp")
+                # Al usar el SKU sugerido en el 'key', forzamos a Streamlit a refrescar el input
+                n_sku = st.text_input("Código", value=sku_sugerido, key=f"sku_input_{sku_sugerido}")
+                
                 n_nom = st.text_input("Nombre", key="n_nom_inp")
                 n_color = st.text_input("Color", key="n_color_inp")
             with c_n2:
@@ -204,7 +207,8 @@ elif menu == "Inventario":
                         "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
                         "color": n_color, "piezas": n_piezas
                     }).execute()
-                    st.success("Guardado con éxito"); st.rerun()
+                    st.success(f"Producto {n_sku} guardado con éxito")
+                    st.rerun()
 
     with tabs[2]:
         if st.session_state.edit_id:

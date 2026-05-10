@@ -42,6 +42,7 @@ if "role" not in st.session_state: st.session_state.role = None
 if "carrito" not in st.session_state: st.session_state.carrito = []
 if "edit_id" not in st.session_state: st.session_state.edit_id = None
 if "temp_matriz" not in st.session_state: st.session_state.temp_matriz = {}
+if "temp_img_url" not in st.session_state: st.session_state.temp_img_url = ""
 
 # --- 4. LOGIN ---
 if not st.session_state.auth:
@@ -66,9 +67,10 @@ with st.sidebar:
     menu = st.radio("Sección", opc)
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.auth = False
+        st.session_state.role = None
         st.rerun()
 
-# --- SECCIÓN: VENTAS ---
+# --- SECCIÓN: VENTAS (SIN CAMBIOS) ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     metodos = [m['valor'] for m in obtener_config("metodo_pago")] or ["EFECTIVO"]
@@ -142,7 +144,7 @@ if menu == "Ventas":
                 }).execute()
             st.session_state.carrito = []; st.success("Venta realizada"); st.rerun()
 
-# --- SECCIÓN: INVENTARIO ---
+# --- SECCIÓN: INVENTARIO (CORREGIDA) ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     cats = [c['valor'] for c in obtener_config("categoria")] or ["GENERAL"]
@@ -170,6 +172,8 @@ elif menu == "Inventario":
                 if c_ac1.button("✏️", key=f"ed_l_{r['id']}"):
                     st.session_state.edit_id = r['id']
                     st.session_state.temp_matriz = d_json
+                    # Forzamos la actualización de la URL en la sesión
+                    st.session_state.temp_img_url = r['foto_path'] if r['foto_path'] else ""
                     st.rerun()
                 if st.session_state.role == "admin" and c_ac2.button("🗑️", key=f"del_l_{r['id']}"):
                     supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
@@ -191,13 +195,13 @@ elif menu == "Inventario":
             m_col = st.text_input("Color", key="m_c")
             m_tal = st.text_input("Talla", key="m_t")
             m_can = st.number_input("Stock", 0, key="m_q")
-            if st.button("Añadir", key="btn_add_v"):
+            if st.button("Añadir Variante", key="btn_add_v"):
                 if m_col and m_tal:
                     if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
                     st.session_state.temp_matriz[m_col][m_tal] = m_can
-            st.write("Estructura:", {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"})
+            st.write("Estructura actual:", {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"})
         
-        if st.button("🚀 GUARDAR NUEVO"):
+        if st.button("🚀 GUARDAR NUEVO PRODUCTO"):
             st.session_state.temp_matriz["_info_extra"] = n_desc
             total = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
             supabase.table("productos").insert({
@@ -212,6 +216,10 @@ elif menu == "Inventario":
             p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
             st.subheader(f"Editor Maestro: {p['codigo']}")
             
+            # --- FUNCIÓN DE ACTUALIZACIÓN DE SESIÓN PARA LA IMAGEN ---
+            def update_img_url():
+                st.session_state.temp_img_url = st.session_state.e_img_url_input
+
             c_e1, c_e2 = st.columns(2)
             with c_e1:
                 e_nom = st.text_input("Nombre", value=p['nombre'], key="e_nom")
@@ -221,18 +229,25 @@ elif menu == "Inventario":
                 e_inv = st.number_input("P. Inversión", value=float(p['precio_inv']), key="e_inv") if st.session_state.role == "admin" else float(p['precio_inv'])
                 e_desc = st.text_area("Descripción", value=st.session_state.temp_matriz.get("_info_extra", ""), key="e_desc")
                 
-                # --- ACTUALIZACIÓN DE IMAGEN ---
+                # --- ACTUALIZACIÓN DE IMAGEN (CORREGIDA) ---
                 st.divider()
                 st.write("**Imagen del Producto**")
-                if p['foto_path']: st.image(p['foto_path'], width=150, caption="Imagen Actual")
-                e_img = st.text_input("Nueva URL de Imagen", value=p['foto_path'] if p['foto_path'] else "", key="e_img_url")
+                # Usamos la URL almacenada en la sesión para mostrar la vista previa
+                if st.session_state.temp_img_url: 
+                    st.image(st.session_state.temp_img_url, width=150, caption="Vista Previa")
+                
+                # Input de texto vinculado a la sesión con on_change
+                e_img = st.text_input("Nueva URL de Imagen", 
+                                      value=st.session_state.temp_img_url, 
+                                      key="e_img_url_input", 
+                                      on_change=update_img_url)
             
             with c_e2:
-                st.write("**Actualizar Variantes**")
+                st.write("**Actualizar Stock y Variantes**")
                 nx_c = st.text_input("Color", key="nx_c")
                 nx_t = st.text_input("Talla", key="nx_t")
                 nx_q = st.number_input("Cant.", 0, key="nx_q")
-                if st.button("Actualizar/Agregar", key="btn_nx"):
+                if st.button("Actualizar/Agregar Variante", key="btn_nx"):
                     if nx_c and nx_t:
                         if nx_c not in st.session_state.temp_matriz: st.session_state.temp_matriz[nx_c] = {}
                         st.session_state.temp_matriz[nx_c][nx_t] = nx_q
@@ -250,25 +265,33 @@ elif menu == "Inventario":
                                 if not st.session_state.temp_matriz[c_n]: del st.session_state.temp_matriz[c_n]
                                 st.rerun()
 
-            if st.button("💾 GUARDAR TODO", type="primary", use_container_width=True, key="btn_save_m"):
+            c_btn1, c_btn2 = st.columns(2)
+            # Usamos st.session_state.temp_img_url para guardar
+            if c_btn1.button("💾 GUARDAR CAMBIOS", type="primary", use_container_width=True, key="btn_save_m"):
                 st.session_state.temp_matriz["_info_extra"] = e_desc
                 total_stk = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
                 supabase.table("productos").update({
                     "nombre": e_nom, "categoria": e_cat, "subcategoria": e_sub,
                     "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_stk, 
                     "descripcion": json.dumps(st.session_state.temp_matriz),
-                    "foto_path": e_img
+                    "foto_path": st.session_state.temp_img_url # Guardamos el valor de la sesión
                 }).eq("id", st.session_state.edit_id).execute()
-                st.session_state.edit_id = None; st.success("Actualizado!"); st.rerun()
-            if st.button("Cancelar", key="btn_can"): st.session_state.edit_id = None; st.rerun()
+                st.session_state.edit_id = None
+                st.session_state.temp_img_url = "" # Limpiamos sesión
+                st.success("Producto actualizado!"); st.rerun()
+            
+            if c_btn2.button("Cancelar Edición", use_container_width=True, key="btn_can"): 
+                st.session_state.edit_id = None
+                st.session_state.temp_img_url = "" # Limpiamos sesión
+                st.rerun()
         else: st.info("Selecciona un producto en la pestaña 'Lista'.")
 
-# --- SECCIÓN: CONFIGURACIÓN ---
+# --- SECCIÓN: CONFIGURACIÓN (SIN CAMBIOS) ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
     tipo = st.selectbox("Configurar", ["categoria", "subcategoria", "vendedor", "metodo_pago"], key="cfg_s")
     valor = st.text_input("Valor", key="cfg_v").upper()
-    if st.button("Añadir", key="cfg_a"):
+    if st.button("Añadir Registro", key="cfg_a"):
         supabase.table("configuracion").insert({"tipo": tipo, "valor": valor}).execute(); st.rerun()
     for item in obtener_config(tipo):
         cl1, cl2 = st.columns([4, 1])
@@ -276,7 +299,7 @@ elif menu == "Configuración" and st.session_state.role == "admin":
         if cl2.button("🗑️", key=f"dc_{item['id']}"):
             supabase.table("configuracion").delete().eq("id", item['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES ---
+# --- SECCIÓN: REPORTES (SIN CAMBIOS) ---
 elif menu == "Reportes" and st.session_state.role == "admin":
     st.header("📊 Reportes")
     c_f1, c_f2 = st.columns(2)

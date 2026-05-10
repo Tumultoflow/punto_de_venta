@@ -4,6 +4,7 @@ from supabase import create_client, Client
 from datetime import datetime
 import pytz
 import json
+import io
 
 # --- 1. CONFIGURACIÓN ---
 ZONA_LOCAL = pytz.timezone('America/Mexico_City')
@@ -13,12 +14,29 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
-# --- 2. SESIÓN ---
+# --- 2. FUNCIONES DE APOYO ---
+def obtener_config(tipo):
+    try:
+        res = supabase.table("configuracion").select("valor").eq("tipo", tipo).execute()
+        return sorted([r['valor'] for r in res.data]) if res.data else ["GENERAL"]
+    except: return ["GENERAL"]
+
+def generar_sku(cat, sub):
+    prefijo = f"{cat[:3]}-{sub[:3]}".upper()
+    try:
+        res = supabase.table("productos").select("codigo").like("codigo", f"{prefijo}%").execute()
+        secuencias = [int(r['codigo'].split('-')[-1]) for r in res.data if '-' in r['codigo']]
+        proximo = max(secuencias) + 1 if secuencias else 1
+        return f"{prefijo}-{proximo:04d}"
+    except: return f"{prefijo}-0001"
+
+# --- 3. MANEJO DE SESIÓN ---
 if "auth" not in st.session_state: st.session_state.auth = False
 if "carrito" not in st.session_state: st.session_state.carrito = []
+if "edit_id" not in st.session_state: st.session_state.edit_id = None
 if "temp_matriz" not in st.session_state: st.session_state.temp_matriz = {}
 
-# --- LOGIN ---
+# --- 4. LOGIN ---
 if not st.session_state.auth:
     st.title("⚖️ Acceso TumultoFlow")
     u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
@@ -28,161 +46,197 @@ if not st.session_state.auth:
             st.rerun()
     st.stop()
 
-menu = st.sidebar.radio("MENÚ", ["Ventas", "Inventario", "Reportes / Anular"])
+# --- 5. NAVEGACIÓN ---
+menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Ventas", "Inventario", "Configuración", "Reportes"])
 
-# --- SECCIÓN VENTAS ---
+# --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
-    st.header("💰 Punto de Venta (Variantes)")
+    st.header("💰 Punto de Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
-    
     if res.data:
         df_p = pd.DataFrame(res.data)
-        busq = st.text_input("🔍 Buscar por Nombre o Código...")
+        busq = st.text_input("🔍 Buscar producto por nombre o código...")
         if busq:
             df_p = df_p[df_p['nombre'].str.contains(busq, case=False) | df_p['codigo'].str.contains(busq, case=False)]
         
         if not df_p.empty:
-            sel_nom = st.selectbox("Elegir Producto", df_p['nombre'].tolist())
-            item = df_p[df_p['nombre'] == sel_nom].iloc[0]
+            sel_list = [f"{r['codigo']} - {r['nombre']}" for _, r in df_p.iterrows()]
+            sel = st.selectbox("Seleccionar Producto", sel_list)
+            item = df_p[df_p['codigo'] == sel.split(" - ")[0]].iloc[0]
             
-            c1, c2 = st.columns(2)
+            c1, c2 = st.columns([1, 2])
             with c1:
-                if item['foto_path']: st.image(item['foto_path'], width=250)
+                if item.get('foto_path'): st.image(item['foto_path'], width=200)
             
             with c2:
+                # Verificar si tiene matriz JSON
                 try:
-                    # Intentar cargar la matriz (Color -> Talla -> Stock)
-                    matriz = json.loads(item['descripcion']) if item['descripcion'].startswith('{') else None
+                    matriz = json.loads(item['descripcion']) if item['descripcion'] and item['descripcion'].startswith('{') else None
                 except: matriz = None
 
                 if matriz:
-                    v_col = st.selectbox("Elegir Color", list(matriz.keys()))
-                    v_tal = st.selectbox("Elegir Talla / Piezas", list(matriz[v_col].keys()))
-                    st.metric("Disponible", matriz[v_col][v_tal])
-                    
-                    v_cant = st.number_input("Cantidad", 1, max(1, int(matriz[v_col][v_tal])))
-                    nombre_venta = f"{item['nombre']} [{v_col} - {v_tal}]"
+                    v_col = st.selectbox("Color", list(matriz.keys()))
+                    v_tal = st.selectbox("Talla / Pieza", list(matriz[v_col].keys()))
+                    stock_v = matriz[v_col][v_tal]
+                    st.metric("Disponible", stock_v)
+                    v_cant = st.number_input("Cantidad", 1, max(1, int(stock_v)))
+                    nombre_venta = f"{item['nombre']} ({v_col}-{v_tal})"
                 else:
                     v_cant = st.number_input("Cantidad", 1, int(item['stock']))
                     nombre_venta = item['nombre']
                     v_col, v_tal = None, None
 
+                v_pre = st.number_input("Precio", value=float(item['precio_pub']))
                 if st.button("➕ Agregar al Carrito"):
                     st.session_state.carrito.append({
-                        "id": item['id'], "nombre": nombre_venta, "cantidad": v_cant,
-                        "precio": float(item['precio_pub']), "codigo": item['codigo'],
-                        "es_matriz": bool(matriz), "color": v_col, "talla": v_tal
+                        "id": item['id'], "codigo": item['codigo'], "nombre": nombre_venta,
+                        "cantidad": v_cant, "precio": v_pre, "precio_inv": float(item['precio_inv']),
+                        "es_matriz": bool(matriz), "v_col": v_col, "v_tal": v_tal
                     })
                     st.toast("Agregado")
 
         if st.session_state.carrito:
-            st.subheader("🛒 Resumen")
-            df_car = pd.DataFrame(st.session_state.carrito)
-            st.table(df_car[['nombre', 'cantidad', 'precio']])
-            
-            if st.button("🚀 FINALIZAR VENTA", type="primary"):
+            st.divider()
+            st.subheader("🛒 Carrito Actual")
+            st.table(pd.DataFrame(st.session_state.carrito)[['nombre', 'cantidad', 'precio']])
+            if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
                 for p in st.session_state.carrito:
-                    # 1. Obtener producto actual para descontar stock
-                    prod = supabase.table("productos").select("*").eq("id", p['id']).execute().data[0]
-                    nuevo_stock_total = prod['stock'] - p['cantidad']
-                    
+                    # 1. Actualizar Stock en Producto
+                    prod_db = supabase.table("productos").select("*").eq("id", p['id']).execute().data[0]
+                    nuevo_total = prod_db['stock'] - p['cantidad']
                     if p['es_matriz']:
-                        m_db = json.loads(prod['descripcion'])
-                        m_db[p['color']][p['talla']] -= p['cantidad']
-                        supabase.table("productos").update({
-                            "stock": nuevo_stock_total, 
-                            "descripcion": json.dumps(m_db)
-                        }).eq("id", p['id']).execute()
+                        m_act = json.loads(prod_db['descripcion'])
+                        m_act[p['v_col']][p['v_tal']] -= p['cantidad']
+                        supabase.table("productos").update({"stock": nuevo_total, "descripcion": json.dumps(m_act)}).eq("id", p['id']).execute()
                     else:
-                        supabase.table("productos").update({"stock": nuevo_stock_total}).eq("id", p['id']).execute()
+                        supabase.table("productos").update({"stock": nuevo_total}).eq("id", p['id']).execute()
                     
-                    # 2. Registrar venta con detalle para poder cancelar después
-                    detalle_json = json.dumps({"es_matriz": p['es_matriz'], "color": p['color'], "talla": p['talla']})
+                    # 2. Registrar Venta (Guardamos meta-data en 'color' para poder anular)
+                    meta_venta = json.dumps({"es_matriz": p['es_matriz'], "v_col": p['v_col'], "v_tal": p['v_tal']})
                     supabase.table("ventas").insert({
-                        "producto": p['nombre'], "codigo_prod": p['codigo'], 
-                        "cantidad": p['cantidad'], "precio_total": p['precio'] * p['cantidad'],
-                        "vendedor": "ADMIN", "fecha_venta": datetime.now(ZONA_LOCAL).isoformat(),
-                        "ganancia": 0, # Opcional: calcular con precio_inv
-                        "color": detalle_json # Guardamos aquí los metadatos para anular
+                        "producto": p['nombre'], "codigo_prod": p['codigo'], "cantidad": p['cantidad'],
+                        "precio_total": p['precio'] * p['cantidad'], "ganancia": (p['precio'] - p['precio_inv']) * p['cantidad'],
+                        "vendedor": "ADMIN", "fecha_venta": datetime.now(ZONA_LOCAL).isoformat(), "color": meta_venta
                     }).execute()
-                
                 st.session_state.carrito = []
-                st.success("Venta realizada")
-                st.rerun()
+                st.success("Venta Registrada"); st.rerun()
 
-# --- SECCIÓN INVENTARIO ---
+# --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
-    st.header("📦 Registro de Producto Único con Variantes")
-    t1, t2 = st.tabs(["📋 Lista de Inventario", "🆕 Registrar Matriz"])
-    
-    with t1:
-        res = supabase.table("productos").select("*").execute()
-        if res.data:
-            df_inv = pd.DataFrame(res.data)
-            st.dataframe(df_inv[['codigo', 'nombre', 'stock', 'precio_pub']])
-            # Aquí podrías añadir botones de edición si lo deseas
-    
-    with t2:
-        c1, c2 = st.columns(2)
-        with c1:
-            n_nom = st.text_input("Nombre del Producto")
-            n_sku = st.text_input("Código Base")
-            n_pre = st.number_input("Precio Venta")
-        with c2:
-            st.write("**Definir Variantes**")
-            m_col = st.text_input("Color (ej: Rojo)", key="m_c")
-            m_tal = st.text_input("Talla / Piezas (ej: M)", key="m_t")
-            m_can = st.number_input("Cantidad inicial", 0, key="m_q")
-            if st.button("Añadir a la lista"):
+    st.header("📦 Inventario")
+    cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
+    tabs = st.tabs(["📋 Lista", "🆕 Nuevo con Variantes", "✏️ Editar"])
+
+    with tabs[0]:
+        busq_i = st.text_input("🔍 Buscar en lista...")
+        res_i = supabase.table("productos").select("*").order("codigo").execute()
+        if res_i.data:
+            df_i = pd.DataFrame(res_i.data)
+            if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False)]
+            for _, r in df_i.iterrows():
+                c_im, c_tx, c_ac = st.columns([1, 4, 1])
+                if r['foto_path']: c_im.image(r['foto_path'], width=60)
+                c_tx.write(f"**{r['codigo']}** - {r['nombre']} | Stock: {r['stock']} | ${r['precio_pub']}")
+                if c_ac.button("✏️", key=f"e_{r['id']}"):
+                    st.session_state.edit_id = r['id']
+                    st.rerun()
+                st.divider()
+
+    with tabs[1]:
+        st.subheader("Registrar Producto y Variantes")
+        c_n1, c_n2 = st.columns(2)
+        with c_n1:
+            n_cat = st.selectbox("Categoría", cats)
+            n_sub = st.selectbox("Subcategoría", subs)
+            n_sku = st.text_input("Código", value=generar_sku(n_cat, n_sub))
+            n_nom = st.text_input("Nombre")
+            n_pub = st.number_input("Precio Venta", 0.0)
+            n_inv = st.number_input("Precio Costo", 0.0)
+            n_foto = st.file_uploader("Imagen")
+        with c_n2:
+            st.write("**Panel de Variantes**")
+            m_col = st.text_input("Color (ej: Azul)", key="mc")
+            m_tal = st.text_input("Talla/Pieza (ej: M)", key="mt")
+            m_can = st.number_input("Stock", 0, key="mq")
+            if st.button("Añadir Variante"):
                 if m_col and m_tal:
                     if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
                     st.session_state.temp_matriz[m_col][m_tal] = m_can
             st.write(st.session_state.temp_matriz)
-        
-        if st.button("🚀 Guardar Producto"):
-            total = sum(sum(v.values()) for v in st.session_state.temp_matriz.values())
+            if st.button("Limpiar Variantes"): st.session_state.temp_matriz = {}
+
+        if st.button("🚀 GUARDAR TODO"):
+            total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
+            url = ""
+            if n_foto:
+                fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
+                supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
+                url = supabase.storage.from_("fotos").get_public_url(fn)
+            
             supabase.table("productos").insert({
-                "nombre": n_nom, "codigo": n_sku, "precio_pub": n_pre,
-                "stock": total, "descripcion": json.dumps(st.session_state.temp_matriz),
-                "precio_inv": 0, "color": "MATRIZ", "piezas": "MATRIZ"
+                "codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv,
+                "stock": total_stk, "descripcion": json.dumps(st.session_state.temp_matriz),
+                "foto_path": url, "categoria": n_cat, "subcategoria": n_sub
             }).execute()
             st.session_state.temp_matriz = {}
-            st.success("Guardado"); st.rerun()
+            st.success("Guardado!"); st.rerun()
 
-# --- SECCIÓN REPORTES Y ANULACIÓN ---
-elif menu == "Reportes / Anular":
-    st.header("📊 Historial y Cancelaciones")
+    with tabs[2]:
+        if st.session_state.edit_id:
+            p_ed = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
+            e_nom = st.text_input("Nombre", value=p_ed['nombre'])
+            e_pre = st.number_input("Precio Venta", value=float(p_ed['precio_pub']))
+            if st.button("💾 Guardar Cambios"):
+                supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pre}).eq("id", st.session_state.edit_id).execute()
+                st.session_state.edit_id = None
+                st.rerun()
+        else: st.info("Selecciona un producto en la lista para editar.")
+
+# --- SECCIÓN: CONFIGURACIÓN ---
+elif menu == "Configuración":
+    st.header("⚙️ Configuración")
+    c1, c2 = st.columns(2)
+    with c1:
+        tipo = st.selectbox("Tipo", ["categoria", "subcategoria"])
+        valor = st.text_input("Nombre").upper()
+        if st.button("Añadir"):
+            supabase.table("configuracion").insert({"tipo": tipo, "valor": valor}).execute()
+            st.rerun()
+    with c2:
+        res_cfg = supabase.table("configuracion").select("*").execute()
+        if res_cfg.data:
+            df_cfg = pd.DataFrame(res_cfg.data)
+            for _, r in df_cfg.iterrows():
+                col1, col2 = st.columns([3, 1])
+                col1.write(f"{r['tipo']}: {r['valor']}")
+                if col2.button("🗑️", key=f"c_{r['id']}"):
+                    supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
+
+# --- SECCIÓN: REPORTES ---
+elif menu == "Reportes":
+    st.header("📊 Reportes y Cancelaciones")
     res_v = supabase.table("ventas").select("*").order("fecha_venta", desc=True).execute()
-    
     if res_v.data:
         df_v = pd.DataFrame(res_v.data)
-        st.dataframe(df_v[['id', 'fecha_venta', 'producto', 'cantidad', 'precio_total']], use_container_width=True)
+        st.dataframe(df_v[['id', 'fecha_venta', 'producto', 'cantidad', 'precio_total']])
         
         st.divider()
-        id_anul = st.selectbox("Seleccionar ID de venta para CANCELAR", df_v['id'].tolist())
-        
-        if st.button("❌ ANULAR VENTA Y DEVOLVER STOCK"):
-            v_data = df_v[df_v['id'] == id_anul].iloc[0]
-            # 1. Recuperar metadatos (color/talla) del campo 'color' que usamos como JSON
+        id_can = st.selectbox("Anular Venta por ID", df_v['id'].tolist())
+        if st.button("❌ ANULAR VENTA SELECCIONADA"):
+            v_info = df_v[df_v['id'] == id_can].iloc[0]
+            # Devolver Stock
+            p_db = supabase.table("productos").select("*").eq("codigo", v_info['codigo_prod']).execute().data[0]
             try:
-                meta = json.loads(v_data['color'])
+                meta = json.loads(v_info['color'])
             except: meta = {"es_matriz": False}
-
-            # 2. Devolver stock al producto
-            p_db = supabase.table("productos").select("*").eq("codigo", v_data['codigo_prod']).execute().data[0]
-            nuevo_total = p_db['stock'] + v_data['cantidad']
             
+            nuevo_stk = p_db['stock'] + v_info['cantidad']
             if meta.get('es_matriz'):
                 m_act = json.loads(p_db['descripcion'])
-                # Devolver a la variante exacta
-                m_act[meta['color']][meta['talla']] += v_data['cantidad']
-                supabase.table("productos").update({
-                    "stock": nuevo_total, "descripcion": json.dumps(m_act)
-                }).eq("id", p_db['id']).execute()
+                m_act[meta['v_col']][meta['v_tal']] += v_info['cantidad']
+                supabase.table("productos").update({"stock": nuevo_stk, "descripcion": json.dumps(m_act)}).eq("id", p_db['id']).execute()
             else:
-                supabase.table("productos").update({"stock": nuevo_total}).eq("id", p_db['id']).execute()
+                supabase.table("productos").update({"stock": nuevo_stk}).eq("id", p_db['id']).execute()
             
-            # 3. Eliminar registro de venta
-            supabase.table("ventas").delete().eq("id", id_anul).execute()
-            st.success("Venta anulada con éxito. Stock restaurado.")
-            st.rerun()
+            supabase.table("ventas").delete().eq("id", id_can).execute()
+            st.success("Venta anulada y stock devuelto"); st.rerun()

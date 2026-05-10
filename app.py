@@ -97,7 +97,8 @@ if menu == "Ventas":
             with c1:
                 foto_v = item.get('foto_path')
                 if foto_v and str(foto_v).strip().lower() != "none":
-                    st.image(foto_v, width=250)
+                    try: st.image(foto_v, width=250)
+                    except: st.write("🖼️❌")
             with c2:
                 data_desc = cargar_json_seguro(item['descripcion'])
                 matriz = {k: v for k, v in data_desc.items() if k != "_info_extra"}
@@ -171,7 +172,6 @@ elif menu == "Inventario":
             for _, r in df_i.iterrows():
                 c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
                 
-                # --- CORRECCIÓN DE IMAGEN ---
                 foto = r.get('foto_path')
                 if foto and str(foto).strip().lower() != "none":
                     try: c_im.image(foto, width=80)
@@ -193,7 +193,7 @@ elif menu == "Inventario":
         c_n1, c_n2 = st.columns(2)
         with c_n1:
             n_cat = st.selectbox("Categoría", cats, key="n_cat")
-            n_sub = st.selectbox("Subcategoría", subs, key="n_sub")
+            n_sub = st.selectbox("Subcategoria", subs, key="n_sub")
             n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub))
             n_nom = st.text_input("Nombre")
             n_pub = st.number_input("Precio Público", 0.0)
@@ -201,20 +201,31 @@ elif menu == "Inventario":
             n_desc = st.text_area("Descripción")
             n_foto = st.file_uploader("Foto", type=["jpg","png","jpeg"])
         with c_n2:
-            st.write("**Variantes**")
+            st.write("**Variantes (Agregar antes de guardar)**")
             v_c, v_t = st.text_input("Color", key="v_c"), st.text_input("Talla", key="v_t")
-            v_s = st.number_input("Stock", 0, key="v_s")
-            if st.button("Agregar Variante"):
+            v_s = st.number_input("Stock Variante", 0, key="v_s")
+            if st.button("➕ Añadir Variante"):
                 if v_c and v_t:
-                    if v_c not in st.session_state.temp_matriz: st.session_state.temp_matriz[v_c] = {}
-                    st.session_state.temp_matriz[v_c][v_t] = v_s
-            st.write("Variantes actuales:", {k:v for k,v in st.session_state.temp_matriz.items() if k != "_info_extra"})
-        if st.button("🚀 GUARDAR", use_container_width=True, type="primary"):
-            url = subir_imagen_supabase(n_foto, n_sku)
-            st.session_state.temp_matriz["_info_extra"] = n_desc
-            total = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
-            supabase.table("productos").insert({"codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, "stock": total, "descripcion": json.dumps(st.session_state.temp_matriz), "categoria": n_cat, "subcategoria": n_sub, "foto_path": url}).execute()
-            st.session_state.temp_matriz = {}; st.success("Guardado"); st.rerun()
+                    v_c_up, v_t_up = v_c.upper(), v_t.upper()
+                    if v_c_up not in st.session_state.temp_matriz: st.session_state.temp_matriz[v_c_up] = {}
+                    st.session_state.temp_matriz[v_c_up][v_t_up] = v_s
+            st.write("Estructura actual:", {k:v for k,v in st.session_state.temp_matriz.items() if k != "_info_extra"})
+
+        if st.button("🚀 GUARDAR PRODUCTO", use_container_width=True, type="primary"):
+            if not st.session_state.temp_matriz:
+                st.error("Agrega al menos una variante (Color/Talla) antes de guardar.")
+            else:
+                url = subir_imagen_supabase(n_foto, n_sku)
+                st.session_state.temp_matriz["_info_extra"] = n_desc
+                # Suma robusta del stock total
+                total_stock = sum(int(q) for c, t in st.session_state.temp_matriz.items() if c != "_info_extra" for q in t.values())
+                
+                supabase.table("productos").insert({
+                    "codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, 
+                    "stock": total_stock, "descripcion": json.dumps(st.session_state.temp_matriz), 
+                    "categoria": n_cat, "subcategoria": n_sub, "foto_path": url
+                }).execute()
+                st.session_state.temp_matriz = {}; st.success(f"Guardado con stock: {total_stock}"); st.rerun()
 
     with t3:
         if st.session_state.edit_id:
@@ -236,8 +247,9 @@ elif menu == "Inventario":
                 ex_s = st.number_input("Stock", 0, key="ex_s")
                 if st.button("Actualizar"):
                     if ex_c and ex_t:
-                        if ex_c not in st.session_state.temp_matriz: st.session_state.temp_matriz[ex_c] = {}
-                        st.session_state.temp_matriz[ex_c][ex_t] = ex_s
+                        c_u, t_u = ex_c.upper(), ex_t.upper()
+                        if c_u not in st.session_state.temp_matriz: st.session_state.temp_matriz[c_u] = {}
+                        st.session_state.temp_matriz[c_u][t_u] = ex_s
                 st.divider()
                 for cn, tallas in list(st.session_state.temp_matriz.items()):
                     if cn != "_info_extra":
@@ -249,16 +261,19 @@ elif menu == "Inventario":
                                 if not st.session_state.temp_matriz[cn]: del st.session_state.temp_matriz[cn]
                                 st.rerun()
             b1, b2, b3 = st.columns(3)
-            if b1.button("💾 GUARDAR", type="primary", use_container_width=True):
+            if b1.button("💾 GUARDAR CAMBIOS", type="primary", use_container_width=True):
                 url = subir_imagen_supabase(e_foto, p['codigo']) or p['foto_path']
                 st.session_state.temp_matriz["_info_extra"] = e_desc
-                total = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
-                supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, "stock": total, "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url}).eq("id", st.session_state.edit_id).execute()
+                total_e = sum(int(q) for c, t in st.session_state.temp_matriz.items() if c != "_info_extra" for q in t.values())
+                supabase.table("productos").update({
+                    "nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_e, 
+                    "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url
+                }).eq("id", st.session_state.edit_id).execute()
                 st.session_state.edit_id = None; st.rerun()
             if b2.button("Cancelar", use_container_width=True): st.session_state.edit_id = None; st.rerun()
             if st.session_state.role == "admin" and b3.button("🗑️ BORRAR", type="secondary", use_container_width=True):
                 supabase.table("productos").delete().eq("id", st.session_state.edit_id).execute(); st.session_state.edit_id = None; st.rerun()
-        else: st.info("Selecciona un producto.")
+        else: st.info("Selecciona un producto de la pestaña 'Lista'.")
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración" and st.session_state.role == "admin":

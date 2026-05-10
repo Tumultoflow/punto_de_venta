@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd  # <-- Corregido: era 'import pd'
+import pandas as pd
 from supabase import create_client, Client
 from datetime import datetime, timedelta
 import pytz
@@ -95,7 +95,9 @@ if menu == "Ventas":
             
             c1, c2 = st.columns([1, 2])
             with c1:
-                if item.get('foto_path'): st.image(item['foto_path'], width=250)
+                foto_v = item.get('foto_path')
+                if foto_v and str(foto_v).strip().lower() != "none":
+                    st.image(foto_v, width=250)
             with c2:
                 data_desc = cargar_json_seguro(item['descripcion'])
                 matriz = {k: v for k, v in data_desc.items() if k != "_info_extra"}
@@ -168,9 +170,17 @@ elif menu == "Inventario":
             if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
             for _, r in df_i.iterrows():
                 c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
-                if r['foto_path']: c_im.image(r['foto_path'], width=80)
+                
+                # --- CORRECCIÓN DE IMAGEN ---
+                foto = r.get('foto_path')
+                if foto and str(foto).strip().lower() != "none":
+                    try: c_im.image(foto, width=80)
+                    except: c_im.write("🖼️❌")
+                else: c_im.write("🚫📸")
+                
                 c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
                 c_tx.caption(f"Stock: {r['stock']} | Cat: {r['categoria']}")
+                
                 if c_ac1.button("✏️", key=f"ed_l_{r['id']}"):
                     st.session_state.edit_id = r['id']
                     st.session_state.temp_matriz = cargar_json_seguro(r['descripcion'])
@@ -216,7 +226,9 @@ elif menu == "Inventario":
                 e_pub = st.number_input("P. Público", value=float(p['precio_pub']))
                 e_inv = st.number_input("P. Inversión", value=float(p['precio_inv'])) if st.session_state.role == "admin" else float(p['precio_inv'])
                 e_desc = st.text_area("Descripción", value=st.session_state.temp_matriz.get("_info_extra", ""))
-                if p['foto_path']: st.image(p['foto_path'], width=150)
+                foto_e = p.get('foto_path')
+                if foto_e and str(foto_e).strip().lower() != "none":
+                    st.image(foto_e, width=150)
                 e_foto = st.file_uploader("Nueva Foto", type=["jpg","png","jpeg"])
             with ce2:
                 st.write("**Variantes**")
@@ -251,14 +263,7 @@ elif menu == "Inventario":
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
-    
-    opciones_config = {
-        "CATEGORÍAS": "categoria",
-        "SUBCATEGORÍAS": "subcategoria",
-        "VENDEDORES": "vendedor",
-        "MÉTODOS DE PAGO": "metodo_pago"
-    }
-    
+    opciones_config = {"CATEGORÍAS": "categoria", "SUBCATEGORÍAS": "subcategoria", "VENDEDORES": "vendedor", "MÉTODOS DE PAGO": "metodo_pago"}
     tab_n = st.selectbox("Seleccione qué desea configurar:", list(opciones_config.keys()))
     tipo_db = opciones_config[tab_n]
     
@@ -267,23 +272,16 @@ elif menu == "Configuración" and st.session_state.role == "admin":
         nuevo_valor = c1.text_input(f"Añadir nuevo a {tab_n}:").upper()
         if c2.button("➕ Añadir", use_container_width=True):
             if nuevo_valor:
-                supabase.table("configuracion").insert({"tipo": tipo_db, "valor": nuevo_valor}).execute()
-                st.success(f"'{nuevo_valor}' añadido.")
-                st.rerun()
+                supabase.table("configuracion").insert({"tipo": tipo_db, "valor": nuevo_valor}).execute(); st.rerun()
     
     st.divider()
-    st.subheader(f"Registros en {tab_n}")
-    
     data_cfg = obtener_config(tipo_db)
     if data_cfg:
         for item in data_cfg:
             col_v, col_b = st.columns([4, 1])
             col_v.write(f"🔹 {item['valor']}")
             if col_b.button("🗑️", key=f"cfg_del_{item['id']}"):
-                supabase.table("configuracion").delete().eq("id", item['id']).execute()
-                st.rerun()
-    else:
-        st.info("No hay registros en esta categoría.")
+                supabase.table("configuracion").delete().eq("id", item['id']).execute(); st.rerun()
 
 # --- SECCIÓN: REPORTES ---
 elif menu == "Reportes" and st.session_state.role == "admin":

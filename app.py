@@ -168,7 +168,10 @@ elif menu == "Inventario":
         res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
-            if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_v, case=False)]
+            # --- LÍNEA 171 CORREGIDA: busq_i en lugar de busq_v ---
+            if busq_i: 
+                df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
+            
             for _, r in df_i.iterrows():
                 c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
                 
@@ -228,12 +231,11 @@ elif menu == "Inventario":
 
     with t3:
         if st.session_state.edit_id:
-            # --- CORRECCIÓN DE SEGURIDAD PARA EL INDEX ERROR ---
             res_e = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute()
             if not res_e.data:
-                st.error("El producto seleccionado ya no existe en la base de datos.")
+                st.error("El producto seleccionado ya no existe.")
                 st.session_state.edit_id = None
-                if st.button("Volver a la lista"): st.rerun()
+                if st.button("Volver"): st.rerun()
             else:
                 p = res_e.data[0]
                 st.subheader(f"Editando: {p['codigo']}")

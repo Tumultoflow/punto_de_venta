@@ -55,7 +55,7 @@ with st.sidebar:
         st.session_state.auth = False
         st.rerun()
 
-# --- SECCIÓN: VENTAS (INTACTA) ---
+# --- SECCIÓN: VENTAS (MANTENIDA) ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
@@ -125,7 +125,7 @@ if menu == "Ventas":
                 }).execute()
             st.session_state.carrito = []; st.success("Venta realizada"); st.rerun()
 
-# --- SECCIÓN: INVENTARIO (EDITAR TODO) ---
+# --- SECCIÓN: INVENTARIO (CORREGIDA) ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
@@ -139,37 +139,36 @@ elif menu == "Inventario":
                 c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
                 if r['foto_path']: c_im.image(r['foto_path'], width=80)
                 c_tx.write(f"**{r['codigo']}** - {r['nombre']} (Stock: {r['stock']})")
-                if c_ac1.button("✏️", key=f"ed_l_{r['id']}"):
+                if c_ac1.button("✏️", key=f"ed_btn_{r['id']}"):
                     st.session_state.edit_id = r['id']
-                    # Cargar la matriz actual al editor temporal
                     try: st.session_state.temp_matriz = json.loads(r['descripcion'])
                     except: st.session_state.temp_matriz = {}
                     st.rerun()
-                if c_ac2.button("🗑️", key=f"del_l_{r['id']}"):
+                if c_ac2.button("🗑️", key=f"del_btn_{r['id']}"):
                     supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
                 st.divider()
 
     with t2:
         c_n1, c_n2 = st.columns(2)
         with c_n1:
-            n_cat = st.selectbox("Categoría", cats)
-            n_sub = st.selectbox("Subcategoría", subs)
-            n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub))
-            n_nom = st.text_input("Nombre Producto")
-            n_pub = st.number_input("Precio Público", 0.0)
-            n_inv = st.number_input("Precio Proveedor", 0.0)
-            n_foto = st.file_uploader("Imagen")
+            n_cat = st.selectbox("Categoría", cats, key="reg_cat")
+            n_sub = st.selectbox("Subcategoría", subs, key="reg_sub")
+            n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub), key="reg_sku")
+            n_nom = st.text_input("Nombre Producto", key="reg_nom")
+            n_pub = st.number_input("Precio Público", 0.0, key="reg_pub")
+            n_inv = st.number_input("Precio Proveedor", 0.0, key="reg_inv")
+            n_foto = st.file_uploader("Imagen", key="reg_foto")
         with c_n2:
             st.write("**Panel de Variantes**")
-            m_col = st.text_input("Color", key="mc")
-            m_tal = st.text_input("Talla", key="mt")
-            m_can = st.number_input("Stock", 0, key="mq")
-            if st.button("Añadir Variante"):
+            m_col = st.text_input("Color", key="mc_reg")
+            m_tal = st.text_input("Talla", key="mt_reg")
+            m_can = st.number_input("Stock", 0, key="mq_reg")
+            if st.button("Añadir Variante", key="btn_add_reg"):
                 if m_col and m_tal:
                     if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
                     st.session_state.temp_matriz[m_col][m_tal] = m_can
             st.write("Variantes actuales:", st.session_state.temp_matriz)
-            if st.button("Limpiar Variantes"): st.session_state.temp_matriz = {}
+            if st.button("Limpiar Variantes", key="btn_clr_reg"): st.session_state.temp_matriz = {}
         
         if st.button("🚀 GUARDAR PRODUCTO NUEVO"):
             total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
@@ -191,25 +190,25 @@ elif menu == "Inventario":
             st.subheader(f"Editando: {p['codigo']}")
             c_e1, c_e2 = st.columns(2)
             with c_e1:
-                e_sku = st.text_input("SKU", value=p['codigo'])
-                e_nom = st.text_input("Nombre", value=p['nombre'])
-                e_cat = st.selectbox("Categoría", cats, index=cats.index(p['categoria']) if p['categoria'] in cats else 0)
-                e_sub = st.selectbox("Subcategoría", subs, index=subs.index(p['subcategoria']) if p['subcategoria'] in subs else 0)
-                e_pub = st.number_input("P. Público", value=float(p['precio_pub']))
-                e_inv = st.number_input("P. Proveedor", value=float(p['precio_inv']))
+                e_sku = st.text_input("SKU", value=p['codigo'], key="edit_sku")
+                e_nom = st.text_input("Nombre", value=p['nombre'], key="edit_nom")
+                e_cat = st.selectbox("Categoría", cats, index=cats.index(p['categoria']) if p['categoria'] in cats else 0, key="edit_cat")
+                e_sub = st.selectbox("Subcategoría", subs, index=subs.index(p['subcategoria']) if p['subcategoria'] in subs else 0, key="edit_sub")
+                e_pub = st.number_input("P. Público", value=float(p['precio_pub']), key="edit_pub")
+                e_inv = st.number_input("P. Proveedor", value=float(p['precio_inv']), key="edit_inv")
             with c_e2:
                 if p['foto_path']: st.image(p['foto_path'], width=100)
-                e_foto = st.file_uploader("Cambiar Imagen")
+                e_foto = st.file_uploader("Cambiar Imagen", key="edit_foto")
                 st.write("**Editar Variantes**")
                 st.write(st.session_state.temp_matriz)
-                m_col_e = st.text_input("Color", key="mce")
-                m_tal_e = st.text_input("Talla", key="mte")
-                m_can_e = st.number_input("Stock", 0, key="mqe")
-                if st.button("Actualizar/Añadir Variante"):
+                m_col_e = st.text_input("Color", key="mc_edit")
+                m_tal_e = st.text_input("Talla", key="mt_edit")
+                m_can_e = st.number_input("Stock", 0, key="mq_edit")
+                if st.button("Actualizar/Añadir Variante", key="btn_add_edit"):
                     if m_col_e and m_tal_e:
                         if m_col_e not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col_e] = {}
                         st.session_state.temp_matriz[m_col_e][m_tal_e] = m_can_e
-                if st.button("Resetear Variantes"): st.session_state.temp_matriz = {}
+                if st.button("Resetear Variantes", key="btn_clr_edit"): st.session_state.temp_matriz = {}
 
             if st.button("💾 GUARDAR TODOS LOS CAMBIOS"):
                 total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
@@ -224,12 +223,12 @@ elif menu == "Inventario":
             if st.button("Cancelar"): st.session_state.edit_id = None; st.rerun()
         else: st.info("Usa el lápiz ✏️ en la lista.")
 
-# --- SECCIONES CONFIG Y REPORTES (SIN CAMBIOS) ---
+# --- SECCIONES RESTANTES ---
 elif menu == "Configuración":
     st.header("⚙️ Configuración")
-    tipo = st.selectbox("Tipo", ["categoria", "subcategoria"])
-    valor = st.text_input("Nombre").upper()
-    if st.button("Añadir"): supabase.table("configuracion").insert({"tipo": tipo, "valor": valor}).execute(); st.rerun()
+    tipo_cfg = st.selectbox("Tipo", ["categoria", "subcategoria"], key="cfg_tipo")
+    valor_cfg = st.text_input("Nombre", key="cfg_val").upper()
+    if st.button("Añadir"): supabase.table("configuracion").insert({"tipo": tipo_cfg, "valor": valor_cfg}).execute(); st.rerun()
 
 elif menu == "Reportes":
     st.header("📊 Reportes")

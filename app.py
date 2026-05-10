@@ -171,8 +171,11 @@ elif menu == "Inventario":
                 c2.write(f"**{r['codigo']}** - {r['nombre']}")
                 c2.caption(f"Stock: {r['stock']} | {r['categoria']} > {r['subcategoria']}")
                 if st.session_state.role == "admin":
+                    # --- FIX: LIMPIEZA TOTAL ANTES DE CARGAR NUEVO PRODUCTO ---
                     if c3.button("✏️", key=f"btn_e_{r['id']}"):
                         st.session_state.edit_id = r['id']
+                        # Limpiamos la matriz temporal y cargamos solo lo nuevo
+                        st.session_state.temp_matriz = {} 
                         st.session_state.temp_matriz = cargar_json_seguro(r['descripcion'])
                         st.rerun()
                     if c4.button("🗑️", key=f"btn_d_{r['id']}"):
@@ -200,7 +203,11 @@ elif menu == "Inventario":
                 if st.button("➕ Añadir Variante"):
                     if v_c and v_t:
                         st.session_state.temp_matriz.setdefault(v_c.upper().strip(), {})[v_t.upper().strip()] = int(v_s)
-                st.write(st.session_state.temp_matriz)
+                # Mostrar lo que se está agregando
+                for cn, tallas in list(st.session_state.temp_matriz.items()):
+                    if cn != "_info_extra":
+                        for tn, qs in list(tallas.items()):
+                            st.caption(f"📍 {cn} - {tn}: {qs}")
             
             if st.button("💾 GUARDAR PRODUCTO", type="primary", use_container_width=True):
                 url = subir_imagen_supabase(n_foto, n_sku)
@@ -214,7 +221,7 @@ elif menu == "Inventario":
                 }).execute()
                 st.session_state.temp_matriz = {}; st.success("Registrado"); st.rerun()
 
-        # ✏️ EDITOR (CORREGIDO CON KEYS)
+        # ✏️ EDITOR MAESTRO CORREGIDO
         with tabs[2]:
             if st.session_state.edit_id:
                 p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
@@ -241,27 +248,36 @@ elif menu == "Inventario":
                     if st.button("Actualizar Variante ", key="btn_upd_var"):
                         if ex_c and ex_t:
                             st.session_state.temp_matriz.setdefault(ex_c.upper().strip(), {})[ex_t.upper().strip()] = int(ex_s); st.rerun()
+                    
+                    # LISTADO DE VARIANTES DEL PRODUCTO ACTUAL
                     for cn, tallas in list(st.session_state.temp_matriz.items()):
                         if cn != "_info_extra":
                             for tn, qs in list(tallas.items()):
-                                r1, r2 = st.columns([3,1])
-                                r1.write(f"🔹 {cn}-{tn}: {qs}")
-                                if r2.button("🗑️", key=f"dv_{cn}_{tn}_{p['id']}"):
+                                col_v1, col_v2 = st.columns([3,1])
+                                col_v1.write(f"🔹 {cn}-{tn}: {qs}")
+                                if col_v2.button("🗑️", key=f"dv_{cn}_{tn}_{p['id']}"):
                                     del st.session_state.temp_matriz[cn][tn]
                                     if not st.session_state.temp_matriz[cn]: del st.session_state.temp_matriz[cn]
                                     st.rerun()
+                
                 if st.button("💾 GUARDAR CAMBIOS", type="primary", use_container_width=True, key="btn_save_all"):
                     url = subir_imagen_supabase(e_foto, e_sku) or p['foto_path']
                     st.session_state.temp_matriz["_info_extra"] = e_desc
                     v_val = {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"}
                     total_e = sum(int(q) for c, t in v_val.items() for q in t.values())
+                    
                     supabase.table("productos").update({
                         "codigo": e_sku, "nombre": e_nom, "categoria": e_cat, "subcategoria": e_sub,
                         "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_e, 
                         "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url
                     }).eq("id", st.session_state.edit_id).execute()
-                    st.session_state.edit_id = None; st.session_state.temp_matriz = {}; st.success("Actualizado"); st.rerun()
-            else: st.info("Selecciona un producto en la lista.")
+                    
+                    # --- LIMPIEZA FINAL ---
+                    st.session_state.edit_id = None
+                    st.session_state.temp_matriz = {}
+                    st.success("✅ Actualizado correctamente")
+                    st.rerun()
+            else: st.info("Selecciona un producto en la lista 📋 para editar.")
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración" and st.session_state.role == "admin":

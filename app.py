@@ -13,7 +13,7 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
-# --- CSS PARA EL CATÁLOGO ---
+# --- CSS PARA LA APP ---
 st.markdown("""
     <style>
     .product-card {
@@ -23,22 +23,11 @@ st.markdown("""
         text-align: center;
         background-color: white;
         margin-bottom: 20px;
+        transition: transform 0.2s;
     }
-    .product-name {
-        font-weight: bold;
-        font-size: 1.1em;
-        margin: 10px 0;
-        color: #1f1f1f;
-    }
-    .product-price {
-        color: #2e7d32;
-        font-weight: 800;
-        font-size: 1.5em;
-        background: #e8f5e9;
-        padding: 5px 10px;
-        border-radius: 8px;
-        display: inline-block;
-    }
+    .product-card:hover { transform: scale(1.02); border-color: #2e7d32; }
+    .product-name { font-weight: bold; font-size: 1.1em; margin: 10px 0; color: #1f1f1f; }
+    .product-price { color: #2e7d32; font-weight: 800; font-size: 1.5em; background: #e8f5e9; padding: 5px 10px; border-radius: 8px; display: inline-block; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -68,10 +57,10 @@ def cargar_json_seguro(campo):
 def subir_imagen_supabase(archivo, sku):
     if archivo is None: return None
     try:
-        extension = archivo.name.split(".")[-1]
-        nombre_archivo = f"{sku}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{extension}"
-        supabase.storage.from_('fotos').upload(nombre_archivo, archivo.getvalue())
-        return supabase.storage.from_('fotos').get_public_url(nombre_archivo)
+        ext = archivo.name.split(".")[-1]
+        nom = f"{sku}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.{ext}"
+        supabase.storage.from_('fotos').upload(nom, archivo.getvalue())
+        return supabase.storage.from_('fotos').get_public_url(nom)
     except: return None
 
 # --- 3. MANEJO DE SESIÓN ---
@@ -140,7 +129,12 @@ if menu == "Ventas":
                 v_pre = st.number_input("Precio", value=float(item['precio_pub']))
                 sel_vendedor = st.selectbox("Vendedor", vendedores)
                 if st.button("➕ Agregar al Carrito", use_container_width=True):
-                    st.session_state.carrito.append({"temp_id": datetime.now().timestamp(), "id": item['id'], "Producto": item['nombre'], "Cantidad": v_cant, "Precio": v_pre, "Color": v_col, "Talla": v_tal, "Vendedor": sel_vendedor, "es_matriz": bool(matriz), "codigo": item['codigo'], "precio_inv": float(item['precio_inv'])})
+                    st.session_state.carrito.append({
+                        "temp_id": datetime.now().timestamp(), "id": item['id'], "Producto": item['nombre'], 
+                        "Cantidad": v_cant, "Precio": v_pre, "Color": v_col, "Talla": v_tal,
+                        "Vendedor": sel_vendedor, "es_matriz": bool(matriz), "codigo": item['codigo'],
+                        "precio_inv": float(item['precio_inv'])
+                    })
                     st.rerun()
 
     if st.session_state.carrito:
@@ -162,20 +156,20 @@ if menu == "Ventas":
                 else:
                     supabase.table("productos").update({"stock": prod_db['stock']-p['Cantidad']}).eq("id", p['id']).execute()
                     nombre_reporte = p['Producto']
-                supabase.table("ventas").insert({"producto": nombre_reporte, "codigo_prod": p['codigo'], "cantidad": p['Cantidad'], "precio_total": p['Precio']*p['Cantidad'], "ganancia": (p['Precio']-p['precio_inv'])*p['Cantidad'], "vendedor": p['Vendedor'], "metodo_pago": sel_metodo, "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()}).execute()
+                supabase.table("ventas").insert({
+                    "producto": nombre_reporte, "codigo_prod": p['codigo'], "cantidad": p['Cantidad'],
+                    "precio_total": p['Precio']*p['Cantidad'], "ganancia": (p['Precio']-p['precio_inv'])*p['Cantidad'],
+                    "vendedor": p['Vendedor'], "metodo_pago": sel_metodo, "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()
+                }).execute()
             st.session_state.carrito = []; st.success("Venta realizada"); st.rerun()
 
-# --- SECCIÓN: INVENTARIO ---
+# --- SECCIÓN: INVENTARIO (CON RESTRICCIONES) ---
 elif menu == "Inventario":
     st.header("📦 Inventario y Catálogo")
-    
-    if st.session_state.role == "admin":
-        tabs_opc = ["📋 Lista", "🆕 Registrar Nuevo", "✏️ Editor", "🖨️ Catálogo"]
-    else:
-        tabs_opc = ["📋 Lista", "🖨️ Catálogo"]
-    
+    tabs_opc = ["📋 Lista", "🆕 Registrar Nuevo", "✏️ Editor", "🖨️ Catálogo"] if st.session_state.role == "admin" else ["📋 Lista", "🖨️ Catálogo"]
     pest = st.tabs(tabs_opc)
 
+    # 📋 LISTA (TODOS)
     with pest[0]:
         busq_i = st.text_input("🔍 Buscar...", key="search_inv")
         res_i = supabase.table("productos").select("*").order("codigo").execute()
@@ -184,29 +178,26 @@ elif menu == "Inventario":
             if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
             for _, r in df_i.iterrows():
                 c_im, c_tx, c_b1, c_b2 = st.columns([1, 4, 0.5, 0.5])
-                foto = r.get('foto_path')
-                if foto and str(foto).lower() != "none":
-                    try: c_im.image(foto, width=80)
-                    except: c_im.write("🖼️❌")
+                f = r.get('foto_path')
+                if f and str(f).lower() != "none": c_im.image(f, width=80)
                 else: c_im.write("🚫📸")
                 c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
                 c_tx.caption(f"Stock: {r['stock']} | Precio: ${r['precio_pub']:,.2f}")
                 if st.session_state.role == "admin":
-                    if c_b1.button("✏️", key=f"ed_l_{r['id']}"):
+                    if c_b1.button("✏️", key=f"ed_{r['id']}"):
                         st.session_state.edit_id = r['id']
                         st.session_state.temp_matriz = cargar_json_seguro(r['descripcion'])
                         st.rerun()
-                    if c_b2.button("🗑️", key=f"del_l_{r['id']}"):
+                    if c_b2.button("🗑️", key=f"dl_{r['id']}"):
                         supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
                 st.divider()
 
-    # Pestañas exclusivas Admin
+    # PESTAÑAS ADMIN
     if st.session_state.role == "admin":
-        cats = [c['valor'] for c in obtener_config("categoria")] or ["GENERAL"]
-        subs = [s['valor'] for s in obtener_config("subcategoria")] or ["GENERAL"]
-        
         with pest[1]: # Registrar
             c1, c2 = st.columns(2)
+            cats = [c['valor'] for c in obtener_config("categoria")] or ["GENERAL"]
+            subs = [s['valor'] for s in obtener_config("subcategoria")] or ["GENERAL"]
             with c1:
                 n_cat, n_sub = st.selectbox("Cat", cats), st.selectbox("Sub", subs)
                 n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub))
@@ -219,88 +210,87 @@ elif menu == "Inventario":
                 vc, vt, vs = st.text_input("Color"), st.text_input("Talla"), st.number_input("Stock", 0)
                 if st.button("➕ Añadir"):
                     if vc and vt:
-                        cup, tup = vc.upper().strip(), vt.upper().strip()
-                        if cup not in st.session_state.temp_matriz: st.session_state.temp_matriz[cup] = {}
-                        st.session_state.temp_matriz[cup][tup] = int(vs)
+                        st.session_state.temp_matriz.setdefault(vc.upper().strip(), {})[vt.upper().strip()] = int(vs)
                 st.json(st.session_state.temp_matriz)
-            if st.button("🚀 GUARDAR", type="primary"):
-                validas = {k:v for k,v in st.session_state.temp_matriz.items() if k != "_info_extra"}
-                if validas:
+            if st.button("🚀 GUARDAR PRODUCTO", type="primary"):
+                v_ok = {k:v for k,v in st.session_state.temp_matriz.items() if k != "_info_extra"}
+                if v_ok:
                     url = subir_imagen_supabase(n_foto, n_sku)
                     st.session_state.temp_matriz["_info_extra"] = n_desc
-                    total = sum(int(q) for c, t in validas.items() for q in t.values())
-                    supabase.table("productos").insert({"codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, "stock": total, "descripcion": json.dumps(st.session_state.temp_matriz), "categoria": n_cat, "subcategoria": n_sub, "foto_path": url}).execute()
+                    tot = sum(int(q) for c, t in v_ok.items() for q in t.values())
+                    supabase.table("productos").insert({"codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, "stock": tot, "descripcion": json.dumps(st.session_state.temp_matriz), "categoria": n_cat, "subcategoria": n_sub, "foto_path": url}).execute()
                     st.session_state.temp_matriz = {}; st.rerun()
 
         with pest[2]: # Editor
             if st.session_state.edit_id:
-                res_e = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute()
-                if res_e.data:
-                    p = res_e.data[0]
-                    ce1, ce2 = st.columns(2)
-                    with ce1:
-                        e_nom = st.text_input("Nombre", p['nombre'])
-                        e_pub = st.number_input("P. Pub", value=float(p['precio_pub']))
-                        e_inv = st.number_input("P. Inv", value=float(p['precio_inv']))
-                        e_desc = st.text_area("Desc", value=st.session_state.temp_matriz.get("_info_extra", ""))
-                        e_foto = st.file_uploader("Nueva Foto", type=["jpg","png","jpeg"])
-                    with ce2:
-                        st.write("**Variantes**")
-                        exc, ext, exs = st.text_input("C"), st.text_input("T"), st.number_input("S", 0)
-                        if st.button("Actualizar"):
-                            if exc and ext:
-                                st.session_state.temp_matriz.setdefault(exc.upper(), {})[ext.upper()] = int(exs); st.rerun()
-                        for cn, tallas in list(st.session_state.temp_matriz.items()):
-                            if cn != "_info_extra":
-                                for tn, qs in list(tallas.items()):
-                                    r1, r2 = st.columns([3,1])
-                                    r1.write(f"{cn}-{tn}: {qs}")
-                                    if r2.button("🗑️", key=f"dv_{cn}_{tn}"):
-                                        del st.session_state.temp_matriz[cn][tn]
-                                        if not st.session_state.temp_matriz[cn]: del st.session_state.temp_matriz[cn]
-                                        st.rerun()
-                    if st.button("💾 GUARDAR", type="primary"):
-                        url = subir_imagen_supabase(e_foto, p['codigo']) or p['foto_path']
-                        st.session_state.temp_matriz["_info_extra"] = e_desc
-                        total_e = sum(int(q) for c, t in st.session_state.temp_matriz.items() if c != "_info_extra" for q in t.values())
-                        supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_e, "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url}).eq("id", st.session_state.edit_id).execute()
-                        st.session_state.edit_id = None; st.rerun()
+                p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
+                ce1, ce2 = st.columns(2)
+                with ce1:
+                    enom = st.text_input("Nombre", p['nombre'])
+                    epub, einv = st.number_input("P. Pub", value=float(p['precio_pub'])), st.number_input("P. Inv", value=float(p['precio_inv']))
+                    edesc = st.text_area("Desc", value=st.session_state.temp_matriz.get("_info_extra", ""))
+                    efoto = st.file_uploader("Nueva Foto", type=["jpg","png","jpeg"])
+                with ce2:
+                    st.write("**Variantes**")
+                    exc, ext, exs = st.text_input("C"), st.text_input("T"), st.number_input("S", 0)
+                    if st.button("Act"):
+                        if exc and ext: st.session_state.temp_matriz.setdefault(exc.upper(), {})[ext.upper()] = int(exs); st.rerun()
+                    for cn, tallas in list(st.session_state.temp_matriz.items()):
+                        if cn != "_info_extra":
+                            for tn, qs in list(tallas.items()):
+                                r1, r2 = st.columns([3,1])
+                                r1.write(f"{cn}-{tn}: {qs}")
+                                if r2.button("🗑️", key=f"dv_{cn}_{tn}"):
+                                    del st.session_state.temp_matriz[cn][tn]
+                                    if not st.session_state.temp_matriz[cn]: del st.session_state.temp_matriz[cn]
+                                    st.rerun()
+                if st.button("💾 GUARDAR", type="primary"):
+                    url = subir_imagen_supabase(efoto, p['codigo']) or p['foto_path']
+                    st.session_state.temp_matriz["_info_extra"] = edesc
+                    tot_e = sum(int(q) for c, t in st.session_state.temp_matriz.items() if c != "_info_extra" for q in t.values())
+                    supabase.table("productos").update({"nombre": enom, "precio_pub": epub, "precio_inv": einv, "stock": tot_e, "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url}).eq("id", st.session_state.edit_id).execute()
+                    st.session_state.edit_id = None; st.rerun()
 
-    # --- PESTAÑA CATÁLOGO CON DESCARGA ---
+    # 🖨️ CATÁLOGO (TODOS)
     idx_cat = 3 if st.session_state.role == "admin" else 1
     with pest[idx_cat]:
         st.subheader("🖼️ Catálogo de Precios")
         res_cat = supabase.table("productos").select("codigo, nombre, precio_pub, foto_path").order("nombre").execute()
-        
         if res_cat.data:
-            df_cat = pd.DataFrame(res_cat.data)
+            # Lógica de impresión en ventana nueva
+            html_items = ""
+            for r in res_cat.data:
+                f_url = r.get('foto_path') or "https://via.placeholder.com/150"
+                html_items += f"""
+                <div style="display: inline-block; width: 180px; border: 1px solid #eee; padding: 10px; margin: 5px; text-align: center; font-family: sans-serif; background: #fff; border-radius: 8px;">
+                    <img src="{f_url}" style="width: 150px; height: 150px; object-fit: contain;">
+                    <div style="font-size: 10px; color: #666; margin-top: 5px;">{r['codigo']}</div>
+                    <div style="font-weight: bold; font-size: 14px; height: 35px; overflow: hidden; margin: 5px 0;">{r['nombre']}</div>
+                    <div style="color: #2e7d32; font-weight: bold; font-size: 18px;">${r['precio_pub']:,.2f}</div>
+                </div>
+                """
             
-            # --- FUNCIÓN DE DESCARGA ---
-            csv = df_cat[["codigo", "nombre", "precio_pub"]].to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Descargar Catálogo (Excel/CSV)",
-                data=csv,
-                file_name=f"catalogo_tumultoflow_{datetime.now().strftime('%d_%m_%Y')}.csv",
-                mime='text/csv',
-                use_container_width=True,
-                type="primary"
-            )
+            if st.button("🖨️ IMPRIMIR CATÁLOGO COMPLETO (PDF)", use_container_width=True, type="primary"):
+                st.components.v1.html(f"""
+                    <script>
+                        var win = window.open('', '_blank');
+                        win.document.write('<html><head><title>Catálogo Duo Legal</title></head><body style="background:#f9f9f9;">');
+                        win.document.write('<h1 style="text-align:center; font-family:sans-serif; color:#333;">Catálogo de Productos</h1>');
+                        win.document.write('<div style="text-align:center;">{html_items}</div>');
+                        win.document.write('</body></html>');
+                        win.document.close();
+                        setTimeout(function(){{ win.print(); }}, 1000);
+                    </script>
+                """, height=0)
             
             st.write("---")
             cols = st.columns(4)
-            for i, r in enumerate(df_cat.to_dict(orient='records')):
+            for i, r in enumerate(res_cat.data):
                 with cols[i % 4]:
                     f_url = r.get('foto_path') or "https://via.placeholder.com/150"
-                    st.markdown(f"""
-                        <div class="product-card">
-                            <img src="{f_url}" style="width:100%; height:140px; object-fit:contain; margin-bottom:10px;">
-                            <div style="color: #666; font-size: 0.8em;">{r['codigo']}</div>
-                            <div class="product-name">{r['nombre'][:35]}</div>
-                            <div class="product-price">${r['precio_pub']:,.2f}</div>
-                        </div>
-                    """, unsafe_allow_html=True)
+                    st.markdown(f"""<div class="product-card"><img src="{f_url}" style="width:100%; height:140px; object-fit:contain;"><div style="color:#666;font-size:0.8em;">{r['codigo']}</div><div class="product-name">{r['nombre'][:35]}</div><div class="product-price">${r['precio_pub']:,.2f}</div></div>""", unsafe_allow_html=True)
 
-# --- CONFIGURACIÓN ---
+# --- CONFIGURACIÓN & REPORTES (SÓLO ADMIN) ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
     opc_c = {"CATEGORÍAS": "categoria", "SUBCATEGORÍAS": "subcategoria", "VENDEDORES": "vendedor", "MÉTODOS DE PAGO": "metodo_pago"}
@@ -310,11 +300,9 @@ elif menu == "Configuración" and st.session_state.role == "admin":
     if st.button("➕ Añadir") and val:
         supabase.table("configuracion").insert({"tipo": t_db, "valor": val}).execute(); st.rerun()
     for item in obtener_config(t_db):
-        cv, cb = st.columns([4, 1])
-        cv.write(f"🔹 {item['valor']}")
+        cv, cb = st.columns([4, 1]); cv.write(f"🔹 {item['valor']}")
         if cb.button("🗑️", key=f"cfg_{item['id']}"): supabase.table("configuracion").delete().eq("id", item['id']).execute(); st.rerun()
 
-# --- REPORTES ---
 elif menu == "Reportes" and st.session_state.role == "admin":
     st.header("📊 Reportes")
     f1, f2 = st.columns(2)

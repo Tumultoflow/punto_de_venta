@@ -47,8 +47,7 @@ if not st.session_state.auth:
         elif u == "equipo" and p == "equipo1":
             st.session_state.auth, st.session_state.role = True, "equipo"
             st.rerun()
-        else:
-            st.error("Credenciales incorrectas")
+        else: st.error("Credenciales incorrectas")
     st.stop()
 
 # --- 5. NAVEGACIÓN ---
@@ -57,7 +56,7 @@ with st.sidebar:
     opc = ["Ventas", "Inventario"]
     if st.session_state.role == "admin":
         opc += ["Configuración", "Reportes"]
-    menu = st.radio("Menú Principal", opc)
+    menu = st.radio("Sección", opc)
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
         st.session_state.auth = False
         st.rerun()
@@ -68,12 +67,12 @@ if menu == "Ventas":
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
     if res.data:
         df_p = pd.DataFrame(res.data)
-        busq = st.text_input("🔍 Buscar producto...")
+        busq = st.text_input("🔍 Buscar por nombre o código...")
         if busq: df_p = df_p[df_p['nombre'].str.contains(busq, case=False) | df_p['codigo'].str.contains(busq, case=False)]
         
         if not df_p.empty:
             sel_list = [f"{r['codigo']} - {r['nombre']}" for _, r in df_p.iterrows()]
-            sel = st.selectbox("Producto", sel_list)
+            sel = st.selectbox("Seleccionar Producto", sel_list)
             item = df_p[df_p['codigo'] == sel.split(" - ")[0]].iloc[0]
             
             c1, c2 = st.columns([1, 2])
@@ -88,7 +87,6 @@ if menu == "Ventas":
                     texto_desc = "Sin descripción"; matriz = None
 
                 st.info(f"**Descripción:** {texto_desc}")
-
                 if matriz:
                     v_col = st.selectbox("Color", list(matriz.keys()))
                     v_tal = st.selectbox("Talla", list(matriz[v_col].keys()))
@@ -99,8 +97,7 @@ if menu == "Ventas":
                     v_col, v_tal = "N/A", "N/A"
                     v_cant = st.number_input("Cantidad", 1, int(item['stock']))
 
-                v_pre = st.number_input("Precio Venta", value=float(item['precio_pub']))
-                
+                v_pre = st.number_input("Precio", value=float(item['precio_pub']))
                 if st.button("➕ Agregar al Carrito"):
                     st.session_state.carrito.append({
                         "temp_id": datetime.now().timestamp(), "id": item['id'], "Producto": item['nombre'], 
@@ -115,7 +112,7 @@ if menu == "Ventas":
         for i, p in enumerate(st.session_state.carrito):
             col_txt, col_btn = st.columns([5, 1])
             col_txt.write(f"**{p['Cantidad']}x {p['Producto']}** ({p['Color']}-{p['Talla']}) | ${p['Precio']*p['Cantidad']:,.2f}")
-            if col_btn.button("❌", key=f"del_{p['temp_id']}"):
+            if col_btn.button("❌", key=f"del_{p.get('temp_id', i)}"):
                 st.session_state.carrito.pop(i); st.rerun()
         
         if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
@@ -133,106 +130,119 @@ if menu == "Ventas":
                     "precio_total": p['Precio']*p['Cantidad'], "ganancia": (p['Precio']-p['precio_inv'])*p['Cantidad'],
                     "vendedor": p['Vendedor'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()
                 }).execute()
-            st.session_state.carrito = []; st.success("Venta Exitosa"); st.rerun()
+            st.session_state.carrito = []; st.success("Venta realizada"); st.rerun()
 
 # --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
     st.header("📦 Gestión de Inventario")
-    cats = [c['valor'] for c in obtener_config("categoria")] or ["GENERAL"]
-    subs = [s['valor'] for s in obtener_config("subcategoria")] or ["GENERAL"]
+    cats_data = obtener_config("categoria")
+    subs_data = obtener_config("subcategoria")
+    cats = [c['valor'] for c in cats_data] or ["GENERAL"]
+    subs = [s['valor'] for s in subs_data] or ["GENERAL"]
     
-    t1, t2, t3 = st.tabs(["📋 Lista", "🆕 Nuevo", "✏️ Editor"])
+    t1, t2, t3 = st.tabs(["📋 Lista", "🆕 Registrar Nuevo", "✏️ Editor Maestro"])
 
     with t1:
         res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
-            for r in res_i.data:
-                c_im, c_tx, c_ac = st.columns([1, 4, 1])
+            df_i = pd.DataFrame(res_i.data)
+            for _, r in df_i.iterrows():
+                c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
                 if r['foto_path']: c_im.image(r['foto_path'], width=80)
-                c_tx.write(f"**{r['codigo']}** - {r['nombre']} | Stock: {r['stock']}")
-                if st.session_state.role == "admin":
-                    c_tx.caption(f"Costo: ${r['precio_inv']} | Venta: ${r['precio_pub']}")
-                
-                if c_ac.button("✏️", key=f"ed_l_{r['id']}"):
+                try: d_json = json.loads(r['descripcion'])
+                except: d_json = {}
+                desc_lista = d_json.get("_info_extra", "Sin descripción")
+                c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
+                c_tx.write(f"_{desc_lista}_")
+                stock_label = f"Stock: {r['stock']}"
+                if st.session_state.role == "admin": stock_label += f" | Costo: ${r['precio_inv']} | Venta: ${r['precio_pub']}"
+                c_tx.caption(stock_label)
+                if c_ac1.button("✏️", key=f"ed_btn_{r['id']}"):
                     st.session_state.edit_id = r['id']
-                    st.session_state.temp_matriz = json.loads(r['descripcion'])
+                    st.session_state.temp_matriz = d_json
                     st.rerun()
+                if st.session_state.role == "admin" and c_ac2.button("🗑️", key=f"del_btn_{r['id']}"):
+                    supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
                 st.divider()
 
     with t2:
         c_n1, c_n2 = st.columns(2)
         with c_n1:
-            n_cat = st.selectbox("Categoría", cats, key="rcat")
-            n_sub = st.selectbox("Subcategoría", subs, key="rsub")
-            n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub))
-            n_nom = st.text_input("Nombre")
-            n_desc = st.text_area("Descripción")
-            n_pub = st.number_input("Precio Público", 0.0)
-            # Solo admin ve/edita precio inversión
-            n_inv = st.number_input("Precio Inversión", 0.0) if st.session_state.role == "admin" else 0.0
-            n_foto = st.file_uploader("Imagen")
+            n_cat = st.selectbox("Categoría", cats, key="reg_cat")
+            n_sub = st.selectbox("Subcategoría", subs, key="reg_sub")
+            n_sku = st.text_input("SKU", value=generar_sku(n_cat, n_sub), key="reg_sku")
+            n_nom = st.text_input("Nombre Producto", key="reg_nom")
+            n_desc = st.text_area("Descripción", key="reg_desc")
+            n_pub = st.number_input("Precio Público", 0.0, key="reg_pub")
+            n_inv = st.number_input("Precio Proveedor", 0.0, key="reg_inv") if st.session_state.role == "admin" else 0.0
+            n_foto = st.file_uploader("Imagen", key="reg_foto")
         with c_n2:
-            st.write("**Variantes**")
-            mc, mt, mq = st.text_input("Color"), st.text_input("Talla"), st.number_input("Stock", 0)
-            if st.button("Añadir"):
-                if mc and mt:
-                    if mc not in st.session_state.temp_matriz: st.session_state.temp_matriz[mc] = {}
-                    st.session_state.temp_matriz[mc][mt] = mq
-            st.write(st.session_state.temp_matriz)
-
-        if st.button("🚀 GUARDAR"):
+            st.write("**Panel de Variantes**")
+            m_col = st.text_input("Color", key="mc_reg")
+            m_tal = st.text_input("Talla", key="mt_reg")
+            m_can = st.number_input("Stock", 0, key="mq_reg")
+            if st.button("Añadir Variante"):
+                if m_col and m_tal:
+                    if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
+                    st.session_state.temp_matriz[m_col][m_tal] = m_can
+            st.write("Variantes actuales:", {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"})
+            if st.button("Limpiar Variantes"): st.session_state.temp_matriz = {}
+        
+        if st.button("🚀 GUARDAR PRODUCTO NUEVO"):
             st.session_state.temp_matriz["_info_extra"] = n_desc
-            total = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
-            supabase.table("productos").insert({"codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, "stock": total, "descripcion": json.dumps(st.session_state.temp_matriz), "categoria": n_cat, "subcategoria": n_sub}).execute()
-            st.session_state.temp_matriz = {}; st.rerun()
+            total_stk = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
+            supabase.table("productos").insert({"codigo": n_sku, "nombre": n_nom, "precio_pub": n_pub, "precio_inv": n_inv, "stock": total_stk, "descripcion": json.dumps(st.session_state.temp_matriz), "categoria": n_cat, "subcategoria": n_sub}).execute()
+            st.session_state.temp_matriz = {}; st.success("Registrado"); st.rerun()
 
     with t3:
         if st.session_state.edit_id:
             p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
             st.subheader(f"Editando: {p['nombre']}")
-            e_nom = st.text_input("Nombre", value=p['nombre'])
-            e_pub = st.number_input("P. Público", value=float(p['precio_pub']))
-            # Protección de precio inversión en edición
-            e_inv = st.number_input("P. Inversión", value=float(p['precio_inv'])) if st.session_state.role == "admin" else float(p['precio_inv'])
+            e_nom = st.text_input("Nombre", value=p['nombre'], key="edit_nom")
+            e_desc = st.text_area("Descripción", value=json.loads(p['descripcion']).get("_info_extra", ""), key="edit_desc")
+            e_pub = st.number_input("Precio Público", value=float(p['precio_pub']), key="edit_pub")
+            e_inv = st.number_input("Precio Proveedor", value=float(p['precio_inv']), key="edit_inv") if st.session_state.role == "admin" else float(p['precio_inv'])
             
             if st.button("💾 GUARDAR CAMBIOS"):
-                st.session_state.temp_matriz["_info_extra"] = json.loads(p['descripcion']).get("_info_extra", "")
-                total = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
-                supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, "stock": total, "descripcion": json.dumps(st.session_state.temp_matriz)}).eq("id", p['id']).execute()
-                st.session_state.edit_id = None; st.rerun()
+                st.session_state.temp_matriz["_info_extra"] = e_desc
+                total_stk = sum(sum(v.values()) for k, v in st.session_state.temp_matriz.items() if k != "_info_extra")
+                supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pub, "precio_inv": e_inv, "stock": total_stk, "descripcion": json.dumps(st.session_state.temp_matriz)}).eq("id", st.session_state.edit_id).execute()
+                st.session_state.edit_id = None; st.success("Actualizado"); st.rerun()
+            if st.button("Cancelar"): st.session_state.edit_id = None; st.rerun()
         else: st.info("Selecciona un producto con ✏️")
 
-# --- SECCIÓN: CONFIGURACIÓN (SOLO ADMIN) ---
+# --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración" and st.session_state.role == "admin":
     st.header("⚙️ Configuración")
-    tipo = st.selectbox("Tipo", ["categoria", "subcategoria", "metodo_pago"])
-    valor = st.text_input("Nombre").upper()
-    if st.button("Añadir"):
-        supabase.table("configuracion").insert({"tipo": tipo, "valor": valor}).execute(); st.rerun()
+    tipo_cfg = st.selectbox("Tipo", ["categoria", "subcategoria", "metodo_pago"])
+    valor_cfg = st.text_input("Nombre").upper()
+    if st.button("Añadir"): supabase.table("configuracion").insert({"tipo": tipo_cfg, "valor": valor_cfg}).execute(); st.rerun()
     
     st.subheader("Valores actuales")
-    for item in obtener_config(tipo):
+    for item in obtener_config(tipo_cfg):
         c1, c2 = st.columns([4, 1])
         c1.write(item['valor'])
-        if c2.button("🗑️", key=f"cfg_{item['id']}"):
+        if c2.button("🗑️", key=f"del_cfg_{item['id']}"):
             supabase.table("configuracion").delete().eq("id", item['id']).execute(); st.rerun()
 
-# --- SECCIÓN: REPORTES (SOLO ADMIN) ---
+# --- SECCIÓN: REPORTES ---
 elif menu == "Reportes" and st.session_state.role == "admin":
     st.header("📊 Reportes")
-    f1, f2 = st.columns(2)
-    ini, fin = f1.date_input("Inicio", datetime.now()-timedelta(30)), f2.date_input("Fin", datetime.now())
-    
-    res_v = supabase.table("ventas").select("*").gte("fecha_venta", ini.isoformat()).lte("fecha_venta", (fin+timedelta(1)).isoformat()).execute()
+    c_f1, c_f2 = st.columns(2)
+    f_ini = c_f1.date_input("Inicio", datetime.now() - timedelta(days=30))
+    f_fin = c_f2.date_input("Fin", datetime.now())
+
+    res_v = supabase.table("ventas").select("*").gte("fecha_venta", f_ini.isoformat()).lte("fecha_venta", (f_fin + timedelta(days=1)).isoformat()).execute()
     if res_v.data:
-        df = pd.DataFrame(res_v.data)
-        df['fecha_venta'] = pd.to_datetime(df['fecha_venta']).dt.tz_localize(None).dt.tz_localize('UTC').dt.tz_convert('America/Mexico_City')
+        df_v = pd.DataFrame(res_v.data)
+        df_v['fecha_venta'] = pd.to_datetime(df_v['fecha_venta']).dt.tz_localize(None).dt.tz_localize('UTC').dt.tz_convert('America/Mexico_City')
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("Ventas", f"${df['precio_total'].sum():,.2f}")
-        m2.metric("Ganancia", f"${df['ganancia'].sum():,.2f}")
-        m3.metric("Tickets", len(df))
+        m1.metric("Ventas Totales", f"${df_v['precio_total'].sum():,.2f}")
+        m2.metric("Ganancia Neta", f"${df_v['ganancia'].sum():,.2f}")
+        m3.metric("Tickets", len(df_v))
         
-        st.subheader("Ventas Diarias")
-        st.line_chart(df.groupby(df['fecha_venta'].dt.date)['precio_total'].sum())
-        st.dataframe(df, use_container_width=True)
+        st.subheader("Ventas por Día")
+        st.line_chart(df_v.groupby(df_v['fecha_venta'].dt.date)['precio_total'].sum())
+        st.dataframe(df_v, use_container_width=True)
+    else: st.info("Sin ventas en este periodo.")

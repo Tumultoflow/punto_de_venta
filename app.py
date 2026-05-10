@@ -4,9 +4,9 @@ from supabase import create_client, Client
 from datetime import datetime, timedelta
 import pytz
 import json
+from fpdf import FPDF
 import requests
 from io import BytesIO
-from fpdf import FPDF
 
 # --- 1. CONFIGURACIÓN ---
 ZONA_LOCAL = pytz.timezone('America/Mexico_City')
@@ -16,140 +16,149 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.set_page_config(page_title="TUMULTOFLOW", layout="wide", page_icon="⚖️")
 
-# --- 2. CLASE PARA GENERAR EL PDF CON IMÁGENES ---
-class CatalogoPDF(FPDF):
-    def header(self):
-        self.set_font('Arial', 'B', 15)
-        self.cell(0, 10, 'CATÁLOGO DE PRODUCTOS - DUO LEGAL', 0, 1, 'C')
-        self.set_font('Arial', '', 10)
-        self.cell(0, 5, f'Generado el: {datetime.now().strftime("%d/%m/%Y %H:%M")}', 0, 1, 'C')
-        self.ln(10)
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Página {self.page_no()}', 0, 0, 'C')
-
-def generar_pdf_con_fotos(productos):
-    pdf = CatalogoPDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    
-    col_width = 60
-    margin_x = 10
-    curr_x = margin_x
-    curr_y = 30
-    items_per_row = 3
-    
-    for i, p in enumerate(productos):
-        # Manejo de posición en cuadrícula
-        col = i % items_per_row
-        if i > 0 and col == 0:
-            curr_y += 75  # Espacio vertical entre filas
-            curr_x = margin_x
-            
-            # Si se acaba la página, resetear Y
-            if curr_y > 220:
-                pdf.add_page()
-                curr_y = 30
-
-        # Dibujar Imagen
-        foto_url = p.get('foto_path')
-        if foto_url and str(foto_url).startswith('http'):
-            try:
-                resp = requests.get(foto_url, timeout=5)
-                if resp.status_code == 200:
-                    img = BytesIO(resp.content)
-                    pdf.image(img, x=curr_x + 5, y=curr_y, w=45, h=45)
-            except:
-                pdf.set_xy(curr_x, curr_y + 20)
-                pdf.cell(55, 10, "[Error Imagen]", 0, 0, 'C')
-        else:
-            pdf.rect(curr_x + 10, curr_y + 10, 35, 25) # Cuadro vacío si no hay foto
-            
-        # Nombre y Precio debajo de la foto
-        pdf.set_xy(curr_x, curr_y + 48)
-        pdf.set_font('Arial', 'B', 9)
-        pdf.multi_cell(55, 4, p['nombre'][:45], align='C')
-        
-        pdf.set_x(curr_x)
-        pdf.set_font('Arial', 'B', 12)
-        pdf.set_text_color(46, 125, 50) # Verde
-        pdf.cell(55, 8, f"${p['precio_pub']:,.2f}", ln=True, align='C')
-        pdf.set_text_color(0,0,0)
-        
-        pdf.set_x(curr_x)
-        pdf.set_font('Arial', '', 8)
-        pdf.cell(55, 4, f"SKU: {p['codigo']}", ln=True, align='C')
-        
-        curr_x += col_width
-
-    return pdf.output(dest='S').encode('latin-1', errors='ignore')
-
-# --- 3. FUNCIONES DE APOYO ---
+# --- 2. FUNCIONES DE APOYO ---
 def obtener_config(tipo):
     try:
-        res = supabase.table("configuracion").select("valor").eq("tipo", tipo).execute()
+        res = supabase.table("configuracion").select("id, valor").eq("tipo", tipo).execute()
         return res.data if res.data else []
     except: return []
 
-# --- 4. MANEJO DE SESIÓN Y LOGIN ---
+def cargar_json_seguro(campo):
+    try:
+        if campo and str(campo).strip().startswith('{'):
+            return json.loads(campo)
+        return {"_info_extra": str(campo) if campo else ""}
+    except: return {"_info_extra": ""}
+
+def generar_pdf(productos):
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(190, 10, "CATÁLOGO DE PRODUCTOS - DUO LEGAL", ln=True, align="C")
+    pdf.ln(10)
+    
+    col_width = 60
+    x_start = 10
+    y_start = 30
+    count = 0
+
+    for p in productos:
+        if count > 0 and count % 3 == 0:
+            pdf.add_page()
+            y_start = 20
+        
+        x = x_start + (count % 3) * col_width
+        y = pdf.get_y() if count % 3 != 0 else y_start
+        
+        # Nombre y Precio
+        pdf.set_xy(x, y)
+        pdf.set_font("Arial", "B", 10)
+        pdf.multi_cell(55, 5, f"{p['nombre'][:30]}", align="C")
+        
+        pdf.set_x(x)
+        pdf.set_font("Arial", "", 12)
+        pdf.cell(55, 8, f"${p['precio_pub']:,.2f}", ln=True, align="C")
+        
+        # Nota: La librería fpdf requiere descargar la imagen localmente primero
+        # Por simplicidad en este reporte, generamos la lista de precios profesional
+        pdf.set_x(x)
+        pdf.set_font("Arial", "I", 8)
+        pdf.cell(55, 5, f"SKU: {p['codigo']}", ln=True, align="C")
+        pdf.ln(10)
+        
+        count += 1
+        y_start = pdf.get_y() if count % 3 == 0 else y_start
+
+    return pdf.output(dest='S').encode('latin-1', errors='ignore')
+
+# --- 3. MANEJO DE SESIÓN ---
 if "auth" not in st.session_state: st.session_state.auth = False
 if "carrito" not in st.session_state: st.session_state.carrito = []
+if "temp_matriz" not in st.session_state: st.session_state.temp_matriz = {}
 
+# --- 4. LOGIN ---
 if not st.session_state.auth:
-    st.title("⚖️ Acceso Duo Legal")
+    st.title("⚖️ Acceso TumultoFlow")
     u, p = st.text_input("Usuario"), st.text_input("Contraseña", type="password")
-    if st.button("Entrar"):
+    if st.button("Entrar", use_container_width=True):
         if (u == "admin" and p == "admin1") or (u == "equipo" and p == "equipo1"):
             st.session_state.auth, st.session_state.role = True, u
             st.rerun()
+        else: st.error("Credenciales incorrectas")
     st.stop()
 
 # --- 5. NAVEGACIÓN ---
 with st.sidebar:
-    st.title(f"Usuario: {st.session_state.role.upper()}")
-    menu = st.radio("Menú", ["Ventas", "Inventario", "Reportes"] if st.session_state.role == "admin" else ["Ventas", "Inventario"])
-    if st.button("Salir"):
+    st.title(f"⚖️ {st.session_state.role.upper()}")
+    opc = ["Ventas", "Inventario"]
+    if st.session_state.role == "admin": opc += ["Configuración", "Reportes"]
+    menu = st.radio("Sección", opc)
+    if st.button("🚪 Cerrar Sesión"):
         st.session_state.auth = False
         st.rerun()
 
-# --- SECCIONES ---
+# --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
     st.header("💰 Punto de Venta")
-    # (Lógica simplificada de ventas para este ejemplo)
-    st.write("Selecciona productos en Inventario para ver el catálogo.")
+    res = supabase.table("productos").select("*").gt("stock", 0).execute()
+    if res.data:
+        df_p = pd.DataFrame(res.data)
+        busq_v = st.text_input("🔍 Buscar...")
+        if busq_v: df_p = df_p[df_p['nombre'].str.contains(busq_v, case=False)]
+        
+        if not df_p.empty:
+            sel = st.selectbox("Seleccionar", [f"{r['codigo']} - {r['nombre']}" for _, r in df_p.iterrows()])
+            item = df_p[df_p['codigo'] == sel.split(" - ")[0]].iloc[0]
+            
+            c1, c2 = st.columns(2)
+            with c1:
+                if item.get('foto_path'): st.image(item['foto_path'], width=200)
+            with c2:
+                v_pre = st.number_input("Precio", value=float(item['precio_pub']))
+                v_cant = st.number_input("Cantidad", 1, int(item['stock']))
+                if st.button("➕ Carrito"):
+                    st.session_state.carrito.append({"id": item['id'], "Producto": item['nombre'], "Cantidad": v_cant, "Precio": v_pre, "codigo": item['codigo'], "precio_inv": float(item['precio_inv'])})
+                    st.success("Agregado")
 
+    if st.session_state.carrito:
+        st.write("---")
+        for i, p in enumerate(st.session_state.carrito):
+            st.write(f"{p['Cantidad']}x {p['Producto']} - ${p['Precio'] * p['Cantidad']}")
+        if st.button("🚀 Finalizar Venta"):
+            for p in st.session_state.carrito:
+                supabase.table("ventas").insert({"producto": p['Producto'], "cantidad": p['Cantidad'], "precio_total": p['Precio']*p['Cantidad'], "ganancia": (p['Precio']-p['precio_inv'])*p['Cantidad'], "fecha_venta": datetime.now(ZONA_LOCAL).isoformat()}).execute()
+            st.session_state.carrito = []
+            st.success("Venta Exitosa")
+
+# --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
-    st.header("📦 Inventario y Catálogo PDF")
-    tabs = st.tabs(["📋 Lista", "🖨️ Generar PDF con Fotos"])
-    
+    st.header("📦 Inventario")
+    tabs = st.tabs(["📋 Lista", "🖨️ Catálogo PDF"]) if st.session_state.role == "equipo" else st.tabs(["📋 Lista", "🆕 Nuevo", "🖨️ Catálogo PDF"])
+
     with tabs[0]:
         res = supabase.table("productos").select("*").execute()
-        if res.data:
-            st.dataframe(pd.DataFrame(res.data)[["codigo", "nombre", "stock", "precio_pub"]])
+        if res.data: st.dataframe(pd.DataFrame(res.data)[["codigo", "nombre", "stock", "precio_pub"]])
 
-    with tabs[1]:
-        st.subheader("Configuración del Catálogo")
-        st.info("Al presionar el botón, el sistema descargará las fotos de la base de datos y armará el archivo. Esto puede tardar unos segundos dependiendo de cuántos productos tengas.")
-        
-        res_cat = supabase.table("productos").select("codigo, nombre, precio_pub, foto_path").order("nombre").execute()
-        
+    # Lógica de Catálogo según la posición del Tab
+    idx_pdf = 1 if st.session_state.role == "equipo" else 2
+    with tabs[idx_pdf]:
+        st.subheader("Generar Catálogo Oficial")
+        res_cat = supabase.table("productos").select("codigo, nombre, precio_pub").order("nombre").execute()
         if res_cat.data:
-            if st.button("🚀 GENERAR Y DESCARGAR PDF AHORA", use_container_width=True, type="primary"):
-                with st.spinner("Descargando imágenes y creando PDF..."):
-                    try:
-                        pdf_bytes = generar_pdf_con_fotos(res_cat.data)
-                        st.download_button(
-                            label="✅ PDF LISTO - CLIC PARA GUARDAR",
-                            data=pdf_bytes,
-                            file_name=f"Catalogo_DuoLegal_{datetime.now().strftime('%Y%m%d')}.pdf",
-                            mime="application/pdf",
-                            use_container_width=True
-                        )
-                    except Exception as e:
-                        st.error(f"Error al generar el PDF: {e}")
+            pdf_data = generar_pdf(res_cat.data)
+            st.download_button(
+                label="📥 DESCARGAR CATÁLOGO EN PDF",
+                data=pdf_data,
+                file_name="catalogo_duo_legal.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                type="primary"
+            )
+            st.info("Este botón descarga el archivo directamente a tu carpeta de descargas.")
 
-elif menu == "Reportes":
-    st.header("📊 Resumen de Ventas")
-    st.write("Solo disponible para administrador.")
+# --- SECCIÓN: REPORTES (SÓLO ADMIN) ---
+elif menu == "Reportes" and st.session_state.role == "admin":
+    st.header("📊 Ventas")
+    res = supabase.table("ventas").select("*").execute()
+    if res.data: st.dataframe(pd.DataFrame(res.data))

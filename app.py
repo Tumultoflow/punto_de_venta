@@ -81,30 +81,42 @@ if menu == "Ventas":
     res = supabase.table("productos").select("*").gt("stock", 0).order("codigo").execute()
     if res.data:
         df_p = pd.DataFrame(res.data)
-        # Buscador rápido para ventas
-        busqueda_v = st.text_input("🔍 Buscar producto para vender...", placeholder="Escribe código o nombre")
+        
+        # 🔍 Buscador mejorado (incluye color)
+        busqueda_v = st.text_input("🔍 Buscar producto...", placeholder="Escribe nombre, código o COLOR")
+        
         if busqueda_v:
-            df_p = df_p[df_p.apply(lambda r: busqueda_v.lower() in str(r['nombre']).lower() or busqueda_v.lower() in str(r['codigo']).lower(), axis=1)]
+            df_p = df_p[df_p.apply(lambda r: 
+                busqueda_v.lower() in str(r['nombre']).lower() or 
+                busqueda_v.lower() in str(r['codigo']).lower() or
+                busqueda_v.lower() in str(r.get('color', '')).lower(), 
+            axis=1)]
         
         if not df_p.empty:
-            sel = st.selectbox("Seleccionar Producto", [f"{r['codigo']} - {r['nombre']}" for _, r in df_p.iterrows()])
-            item = df_p[df_p['codigo'] == sel.split(" - ")[0]].iloc[0]
+            # 🎨 La lista desplegable ahora muestra el COLOR para que puedas escoger
+            opciones_mostrar = [f"{r['codigo']} | {r['nombre']} | COLOR: {r.get('color', 'N/A')} | STOCK: {r['stock']}" for _, r in df_p.iterrows()]
+            sel = st.selectbox("Seleccionar Producto Exacto", opciones_mostrar)
+            
+            # Extraer el código para buscar el ítem real
+            sku_seleccionado = sel.split(" | ")[0]
+            item = df_p[df_p['codigo'] == sku_seleccionado].iloc[0]
             
             c1, c2 = st.columns([1, 2])
             with c1:
                 if item.get('foto_path'): st.image(item['foto_path'], width=200)
+                st.info(f"**Variante:** {item.get('color', 'Único')} - {item.get('piezas', 'Estándar')}")
                 if item.get('descripcion'): st.caption(f"📝 {item['descripcion']}")
             with c2:
-                v_cant = st.number_input("Cantidad", 1, int(item['stock']))
+                v_cant = st.number_input("Cantidad a vender", 1, int(item['stock']))
                 v_pre = st.number_input("Precio unitario", value=float(item['precio_pub']))
                 if st.button("➕ Agregar al Carrito"):
                     st.session_state.carrito.append({
-                        "id": item['id'], "codigo": item['codigo'], "nombre": item['nombre'],
+                        "id": item['id'], "codigo": item['codigo'], "nombre": f"{item['nombre']} ({item.get('color', 'N/A')})",
                         "cantidad": v_cant, "precio": v_pre, "precio_inv": float(item['precio_inv'])
                     })
-                    st.toast(f"Agregado: {item['nombre']}")
+                    st.toast(f"Agregado: {item['nombre']} color {item.get('color', 'N/A')}")
         else:
-            st.warning("No se encontraron productos con ese criterio.")
+            st.warning("No hay productos que coincidan con la búsqueda.")
 
         if st.session_state.carrito:
             st.divider()
@@ -147,33 +159,28 @@ elif menu == "Inventario":
     tabs = st.tabs(["📋 Lista de Productos", "🆕 Nuevo Producto", "✏️ Editar Producto"])
     
     with tabs[0]:
-        # --- BUSCADOR DE INVENTARIO ---
-        busqueda_i = st.text_input("🔍 Buscar en inventario...", placeholder="Escribe el código, nombre o descripción para filtrar...")
-        
+        busqueda_i = st.text_input("🔍 Buscar en inventario...", placeholder="Código, nombre, descripción o color...")
         res = supabase.table("productos").select("*").order("codigo").execute()
         if res.data:
             df_i = pd.DataFrame(res.data)
-            
-            # Aplicar filtro si hay búsqueda
             if busqueda_i:
                 df_i = df_i[df_i.apply(lambda r: 
                     busqueda_i.lower() in str(r['nombre']).lower() or 
                     busqueda_i.lower() in str(r['codigo']).lower() or 
                     busqueda_i.lower() in str(r.get('descripcion', '')).lower() or
-                    busqueda_i.lower() in str(r.get('color', '')).lower(), 
-                axis=1)]
+                    busqueda_i.lower() in str(r.get('color', '')).lower(), axis=1)]
 
             c_desc1, c_desc2 = st.columns(2)
             with c_desc1:
-                st.download_button("🖼️ Catálogo Fotos (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html", use_container_width=True, key="dl_cat_inv")
+                st.download_button("🖼️ Catálogo Fotos (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html", use_container_width=True)
             with c_desc2:
                 buf = io.BytesIO(); df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(pd.ExcelWriter(buf, engine='xlsxwriter'), index=False)
-                st.download_button("📊 Lista Excel", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel", use_container_width=True, key="dl_xls_inv")
+                st.download_button("📊 Lista Excel", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel", use_container_width=True)
             
             st.divider()
             cols_h = [1, 3, 1, 1, 1, 1] if st.session_state.role == "admin" else [1, 3, 1, 1, 1]
             h = st.columns(cols_h)
-            h[1].write("**Producto / Descripción**")
+            h[1].write("**Producto / Color / Descripción**")
             h[2].write("**Stock**")
             h[3].write("**P. Público**")
             if st.session_state.role == "admin": h[4].write("**P. Costo**")
@@ -182,7 +189,8 @@ elif menu == "Inventario":
             for _, r in df_i.iterrows():
                 col = st.columns(cols_h)
                 if r['foto_path']: col[0].image(r['foto_path'], width=60)
-                col[1].write(f"**{r['codigo']}** - {r['nombre']} ({r.get('color', 'N/A')}/{r.get('piezas', 'N/A')})")
+                col[1].write(f"**{r['codigo']}** - {r['nombre']}")
+                col[1].write(f"🎨 Color: {r.get('color', 'N/A')} | 📏 Talle: {r.get('piezas', 'N/A')}")
                 if r.get('descripcion'): col[1].caption(f"📝 {r['descripcion']}")
                 
                 col[2].write(f"{r['stock']}")
@@ -191,11 +199,10 @@ elif menu == "Inventario":
                 if st.session_state.role == "admin":
                     col[4].write(f"${r['precio_inv']:,.2f}")
                     with col[5]:
-                        c_a1, c_a2 = st.columns(2)
-                        if c_a1.button("✏️", key=f"edit_inv_b_{r['id']}"):
+                        if st.button("✏️", key=f"edit_inv_{r['id']}"):
                             st.session_state.edit_id = r['id']
                             st.rerun()
-                        if c_a2.button("🗑️", key=f"del_inv_b_{r['id']}"):
+                        if st.button("🗑️", key=f"del_inv_{r['id']}"):
                             supabase.table("productos").delete().eq("id", r['id']).execute()
                             st.rerun()
 
@@ -208,19 +215,19 @@ elif menu == "Inventario":
                 n_sub = st.selectbox("Subcategoría", subs, key="n_sub_sel")
                 sku_sugerido = generar_sku(n_cat, n_sub)
                 n_sku = st.text_input("Código", value=sku_sugerido, key=f"sku_input_{sku_sugerido}")
-                n_nom = st.text_input("Nombre", key="n_nom_inp")
-                n_desc = st.text_area("Descripción", key="n_desc_inp")
+                n_nom = st.text_input("Nombre del Producto", key="n_nom_inp")
+                n_desc = st.text_area("Descripción (opcional)", key="n_desc_inp")
             with c_n2:
-                n_color = st.text_input("Color", key="n_color_inp")
-                n_piezas = st.text_input("Talle / Piezas", key="n_pz_inp")
+                n_color = st.text_input("Color", key="n_color_inp", placeholder="Ej: Azul Marino")
+                n_piezas = st.text_input("Talle / Piezas", key="n_pz_inp", placeholder="Ej: M o 3 piezas")
                 n_pub = st.number_input("Precio Venta", 0.0, key="n_pub_inp")
                 n_inv = st.number_input("Precio Costo", 0.0, key="n_inv_inp")
-                n_stk = st.number_input("Stock", 0, key="n_stk_inp")
-                n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'], key="n_foto_inp")
+                n_stk = st.number_input("Stock Inicial", 0, key="n_stk_inp")
+                n_foto = st.file_uploader("Imagen del producto", type=['jpg','png','jpeg'], key="n_foto_inp")
             
             if st.button("🚀 Guardar Producto", key="btn_save_final"):
                 if not n_nom or not n_foto:
-                    st.warning("Nombre e Imagen son obligatorios.")
+                    st.warning("El nombre y la imagen son obligatorios.")
                 else:
                     try:
                         fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
@@ -232,7 +239,7 @@ elif menu == "Inventario":
                             "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
                             "color": n_color, "piezas": n_piezas
                         }).execute()
-                        st.success(f"Producto {n_sku} guardado con éxito")
+                        st.success(f"Producto {n_sku} ({n_color}) guardado con éxito")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Error al guardar: {e}")
@@ -252,7 +259,7 @@ elif menu == "Inventario":
                 e_stk = st.number_input("Stock", value=int(p_edit['stock']), key="e_stk_edit")
                 
                 c_eb1, c_eb2 = st.columns(2)
-                if c_eb1.button("💾 Guardar Cambios", type="primary", key="e_save_btn"):
+                if c_eb1.button("💾 Guardar Cambios", type="primary"):
                     try:
                         supabase.table("productos").update({
                             "nombre": e_nom, "descripcion": e_desc, "color": e_color, "piezas": e_piezas,
@@ -262,11 +269,11 @@ elif menu == "Inventario":
                         st.success("Actualizado"); st.rerun()
                     except Exception as e:
                         st.error(f"Error al actualizar: {e}")
-                if c_eb2.button("❌ Cancelar", key="e_cancel_btn"):
+                if c_eb2.button("❌ Cancelar"):
                     st.session_state.edit_id = None
                     st.rerun()
         else:
-            st.info("Selecciona un producto en la lista de Inventario.")
+            st.info("Ve a la pestaña 'Lista de Productos' y haz clic en el lápiz ✏️ para editar uno.")
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración":
@@ -321,4 +328,4 @@ elif menu == "Reportes":
                         supabase.table("productos").update({"stock": p_r.data[0]['stock'] + v_d['cantidad']}).eq("codigo", v_d['codigo_prod']).execute()
                     supabase.table("ventas").delete().eq("id", id_sel).execute()
                     st.rerun()
-    else: st.info("No hay registros.")
+    else: st.info("No hay registros de ventas.")

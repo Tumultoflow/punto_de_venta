@@ -77,8 +77,8 @@ if menu == "Ventas":
     res = supabase.table("productos").select("*").gt("stock", 0).execute()
     if res.data:
         df_p = pd.DataFrame(res.data)
-        busq = st.text_input("🔍 Buscar por nombre o código...")
-        if busq: df_p = df_p[df_p['nombre'].str.contains(busq, case=False) | df_p['codigo'].str.contains(busq, case=False)]
+        busq_v = st.text_input("🔍 Buscar para vender (nombre o código)...", key="busq_ventas")
+        if busq_v: df_p = df_p[df_p['nombre'].str.contains(busq_v, case=False) | df_p['codigo'].str.contains(busq_v, case=False)]
         
         if not df_p.empty:
             sel_list = [f"{r['codigo']} - {r['nombre']}" for _, r in df_p.iterrows()]
@@ -151,27 +151,38 @@ elif menu == "Inventario":
     t1, t2, t3 = st.tabs(["📋 Lista", "🆕 Registrar Nuevo", "✏️ Editor Maestro"])
 
     with t1:
+        # --- BUSCADOR EN INVENTARIO ---
+        busq_i = st.text_input("🔍 Buscar en inventario (Nombre o Código SKU)...", key="busq_inv_main")
+        
         res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
-            for _, r in df_i.iterrows():
-                c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
-                if r['foto_path']: c_im.image(r['foto_path'], width=80)
-                d_json = cargar_json_seguro(r['descripcion'])
-                c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
-                c_tx.caption(f"Cat: {r['categoria']} | Sub: {r.get('subcategoria', 'N/A')}")
-                stock_label = f"Stock: {r['stock']}"
-                if st.session_state.role == "admin": 
-                    stock_label += f" | Costo: ${r['precio_inv']} | Venta: ${r['precio_pub']}"
-                c_tx.caption(stock_label)
-                
-                if c_ac1.button("✏️", key=f"edit_l_{r['id']}"):
-                    st.session_state.edit_id = r['id']
-                    st.session_state.temp_matriz = d_json
-                    st.rerun()
-                if st.session_state.role == "admin" and c_ac2.button("🗑️", key=f"del_l_{r['id']}"):
-                    supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
-                st.divider()
+            
+            # Filtrado por búsqueda
+            if busq_i:
+                df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
+            
+            if df_i.empty:
+                st.warning("No se encontraron productos con ese criterio.")
+            else:
+                for _, r in df_i.iterrows():
+                    c_im, c_tx, c_ac1, c_ac2 = st.columns([1, 4, 0.5, 0.5])
+                    if r['foto_path']: c_im.image(r['foto_path'], width=80)
+                    d_json = cargar_json_seguro(r['descripcion'])
+                    c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
+                    c_tx.caption(f"Cat: {r['categoria']} | Sub: {r.get('subcategoria', 'N/A')}")
+                    stock_label = f"Stock: {r['stock']}"
+                    if st.session_state.role == "admin": 
+                        stock_label += f" | Costo: ${r['precio_inv']} | Venta: ${r['precio_pub']}"
+                    c_tx.caption(stock_label)
+                    
+                    if c_ac1.button("✏️", key=f"edit_l_{r['id']}"):
+                        st.session_state.edit_id = r['id']
+                        st.session_state.temp_matriz = d_json
+                        st.rerun()
+                    if st.session_state.role == "admin" and c_ac2.button("🗑️", key=f"del_l_{r['id']}"):
+                        supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
+                    st.divider()
 
     with t2:
         c_n1, c_n2 = st.columns(2)

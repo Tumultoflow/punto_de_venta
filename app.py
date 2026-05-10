@@ -131,7 +131,7 @@ if menu == "Ventas":
                 st.success("Venta Registrada")
                 st.rerun()
 
-# --- SECCIÓN: INVENTARIO (CORREGIDA) ---
+# --- SECCIÓN: INVENTARIO (CON PRECIOS PARA ADMIN) ---
 elif menu == "Inventario":
     st.header("📦 Inventario")
     cats, subs = obtener_config("categoria"), obtener_config("subcategoria")
@@ -143,47 +143,61 @@ elif menu == "Inventario":
             df_i = pd.DataFrame(res.data)
             c_desc1, c_desc2 = st.columns(2)
             with c_desc1:
-                st.download_button("🖼️ Catálogo Fotos (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html", use_container_width=True)
+                st.download_button("🖼️ Catálogo Fotos (HTML)", generar_html_catalogo(df_i), "catalogo.html", "text/html", use_container_width=True, key="dl_cat")
             with c_desc2:
                 buf = io.BytesIO(); df_i[['codigo', 'nombre', 'precio_pub', 'stock']].to_excel(pd.ExcelWriter(buf, engine='xlsxwriter'), index=False)
-                st.download_button("📊 Lista Excel", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel", use_container_width=True)
+                st.download_button("📊 Lista Excel", buf.getvalue(), "precios.xlsx", "application/vnd.ms-excel", use_container_width=True, key="dl_xls")
             
             st.divider()
+            
+            # Encabezados de la tabla
+            cols_h = [1, 3, 1, 1, 1, 1] if st.session_state.role == "admin" else [1, 3, 1, 1, 1]
+            h = st.columns(cols_h)
+            h[1].write("**Producto**")
+            h[2].write("**Stock**")
+            h[3].write("**P. Público**")
+            if st.session_state.role == "admin":
+                h[4].write("**P. Costo**")
+            
+            st.divider()
+
             for _, r in df_i.iterrows():
-                col_i1, col_i2, col_i3, col_i4, col_i5, col_i6 = st.columns([1, 3, 1, 1, 1, 1])
-                if r['foto_path']: col_i1.image(r['foto_path'], width=60)
-                col_i2.write(f"**{r['codigo']}** - {r['nombre']} ({r.get('color', 'N/A')}/{r.get('piezas', 'N/A')})")
-                col_i3.write(f"Stock: {r['stock']}")
-                col_i4.write(f"${r['precio_pub']:,.2f}")
+                col = st.columns(cols_h)
+                if r['foto_path']: col[0].image(r['foto_path'], width=60)
+                col[1].write(f"**{r['codigo']}**\n{r['nombre']}\n({r.get('color', 'N/A')}/{r.get('piezas', 'N/A')})")
+                col[2].write(f"{r['stock']}")
+                col[3].write(f"${r['precio_pub']:,.2f}")
                 
-                if col_i5.button("✏️", key=f"edit_b_{r['id']}"):
-                    st.session_state.edit_id = r['id']
-                    st.toast("Cargando en pestaña Editar...")
-                
-                # BOTÓN ELIMINAR RÁPIDO
-                if col_i6.button("🗑️", key=f"del_prod_{r['id']}", help="Borrar producto del sistema"):
-                    supabase.table("productos").delete().eq("id", r['id']).execute()
-                    st.success("Producto eliminado")
-                    st.rerun()
+                if st.session_state.role == "admin":
+                    col[4].write(f"${r['precio_inv']:,.2f}")
+                    # Botones de acción en la última columna para Admin
+                    with col[5]:
+                        c_act1, c_act2 = st.columns(2)
+                        if c_act1.button("✏️", key=f"edit_inv_{r['id']}"):
+                            st.session_state.edit_id = r['id']
+                            st.rerun()
+                        if c_act2.button("🗑️", key=f"del_inv_{r['id']}"):
+                            supabase.table("productos").delete().eq("id", r['id']).execute()
+                            st.rerun()
 
     with tabs[1]:
         if st.session_state.role == "admin":
             st.subheader("Registrar nuevo ingreso")
             c_n1, c_n2 = st.columns(2)
             with c_n1:
-                n_cat = st.selectbox("Categoría", cats, key="n_cat")
-                n_sub = st.selectbox("Subcategoría", subs, key="n_sub")
-                n_sku = st.text_input("Código", value=generar_sku(n_cat, n_sub), key="n_sku")
-                n_nom = st.text_input("Nombre", key="n_nom")
-                n_color = st.text_input("Color", key="n_color")
+                n_cat = st.selectbox("Categoría", cats, key="new_cat")
+                n_sub = st.selectbox("Subcategoría", subs, key="new_sub")
+                n_sku = st.text_input("Código", value=generar_sku(n_cat, n_sub), key="new_sku")
+                n_nom = st.text_input("Nombre", key="new_nom")
+                n_color = st.text_input("Color", key="new_color")
             with c_n2:
-                n_piezas = st.text_input("Talle / Piezas", key="n_piezas")
-                n_pub = st.number_input("Precio Venta", 0.0, key="n_pub")
-                n_inv = st.number_input("Precio Costo", 0.0, key="n_inv")
-                n_stk = st.number_input("Stock", 0, key="n_stk")
-                n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'], key="n_foto")
+                n_piezas = st.text_input("Talle / Piezas", key="new_piezas")
+                n_pub = st.number_input("Precio Venta", 0.0, key="new_pub")
+                n_inv = st.number_input("Precio Costo", 0.0, key="new_inv")
+                n_stk = st.number_input("Stock", 0, key="new_stk")
+                n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'], key="new_foto")
             
-            if st.button("🚀 Guardar Producto", key="btn_save_prod"):
+            if st.button("🚀 Guardar Producto", key="btn_save_new"):
                 if n_nom and n_foto:
                     fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
                     supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
@@ -201,45 +215,44 @@ elif menu == "Inventario":
             if res_e.data:
                 p_edit = res_e.data[0]
                 st.subheader(f"Editando: {p_edit['codigo']}")
-                # USANDO KEYS ÚNICOS PARA EVITAR EL ERROR DE DUPLICADOS
-                e_nom = st.text_input("Nombre", value=p_edit['nombre'], key="e_nom")
-                e_color = st.text_input("Color", value=p_edit.get('color', ''), key="e_color")
-                e_piezas = st.text_input("Talle/Piezas", value=p_edit.get('piezas', ''), key="e_piezas")
-                e_pub = st.number_input("Precio Venta", value=float(p_edit['precio_pub']), key="e_pub")
-                e_inv = st.number_input("Precio Costo", value=float(p_edit['precio_inv']), key="e_inv")
-                e_stk = st.number_input("Stock", value=int(p_edit['stock']), key="e_stk")
+                e_nom = st.text_input("Nombre", value=p_edit['nombre'], key="edit_nom")
+                e_color = st.text_input("Color", value=p_edit.get('color', ''), key="edit_color")
+                e_piezas = st.text_input("Talle/Piezas", value=p_edit.get('piezas', ''), key="edit_piezas")
+                e_pub = st.number_input("Precio Venta", value=float(p_edit['precio_pub']), key="edit_pub")
+                e_inv = st.number_input("Precio Costo", value=float(p_edit['precio_inv']), key="edit_inv")
+                e_stk = st.number_input("Stock", value=int(p_edit['stock']), key="edit_stk")
                 
                 c_eb1, c_eb2 = st.columns(2)
-                if c_eb1.button("💾 Guardar Cambios", type="primary", key="btn_update"):
-                    supabase.table("productos").update({
+                if c_eb1.button("💾 Guardar Cambios", type="primary", key="btn_edit_save"):
+                    supabase.table.update({
                         "nombre": e_nom, "color": e_color, "piezas": e_piezas,
                         "precio_pub": e_pub, "precio_inv": e_inv, "stock": e_stk
                     }).eq("id", st.session_state.edit_id).execute()
                     st.session_state.edit_id = None
                     st.success("Cambios aplicados"); st.rerun()
-                if c_eb2.button("❌ Cancelar", key="btn_cancel_edit"):
+                if c_eb2.button("❌ Cancelar", key="btn_edit_cancel"):
                     st.session_state.edit_id = None
                     st.rerun()
         else:
-            st.info("Selecciona un producto con ✏️ en la lista.")
+            st.info("Selecciona un producto con ✏️ en la lista de Inventario.")
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración":
     st.header("⚙️ Configuración")
     colA, colB = st.columns(2)
     with colA:
-        tipo = st.selectbox("Añadir nuevo:", ["categoria", "subcategoria"], key="conf_tipo")
-        valor = st.text_input("Nombre", key="conf_val").upper().strip()
-        if st.button("Añadir", key="conf_add"):
+        tipo = st.selectbox("Añadir nuevo:", ["categoria", "subcategoria"], key="cfg_tipo")
+        valor = st.text_input("Nombre", key="cfg_val").upper().strip()
+        if st.button("Añadir", key="cfg_btn"):
             supabase.table("configuracion").insert({"tipo": tipo, "valor": valor}).execute()
             st.rerun()
     with colB:
-        tipo_v = st.radio("Ver:", ["categoria", "subcategoria"], horizontal=True, key="conf_view")
+        tipo_v = st.radio("Ver:", ["categoria", "subcategoria"], horizontal=True, key="cfg_view")
         res_c = supabase.table("configuracion").select("*").eq("tipo", tipo_v).execute()
         for r in res_c.data:
             c1, c2 = st.columns([4, 1])
             c1.write(r['valor'])
-            if c2.button("🗑️", key=f"conf_del_{r['id']}"):
+            if c2.button("🗑️", key=f"cfg_del_{r['id']}"):
                 supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
 # --- SECCIÓN: REPORTES ---
@@ -259,17 +272,17 @@ elif menu == "Reportes":
             st.dataframe(df_v[['Fecha Formato', 'producto', 'cantidad', 'precio_total', 'vendedor']], use_container_width=True)
         with t_rep[2]:
             opc_v = [f"{r['id']} | {r['producto']}" for r in res_v.data]
-            sel_v = st.selectbox("Venta:", opc_v, key="sel_v_rep")
+            sel_v = st.selectbox("Venta:", opc_v, key="rep_sel_v")
             id_sel = int(sel_v.split(" | ")[0])
             c_r1, c_r2 = st.columns(2)
             with c_r1:
-                n_f = st.date_input("Fecha correcta", key="n_f_rep")
-                if st.button("Fix Fecha", key="btn_fix_f"):
+                n_f = st.date_input("Fecha correcta", key="rep_date_f")
+                if st.button("Fix Fecha", key="rep_btn_f"):
                     f_f = datetime.combine(n_f, datetime.min.time()).replace(hour=12).isoformat()
                     supabase.table("ventas").update({"fecha_venta": f_f}).eq("id", id_sel).execute()
                     st.rerun()
             with c_r2:
-                if st.button("Eliminar Venta", key="btn_del_v"):
+                if st.button("Eliminar Venta", key="rep_btn_del"):
                     v_d = next(i for i in res_v.data if i['id'] == id_sel)
                     p_r = supabase.table("productos").select("stock").eq("codigo", v_d['codigo_prod']).execute()
                     if p_r.data:

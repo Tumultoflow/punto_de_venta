@@ -182,12 +182,8 @@ elif menu == "Inventario":
             with c_n1:
                 n_cat = st.selectbox("Categoría", cats, key="n_cat_sel")
                 n_sub = st.selectbox("Subcategoría", subs, key="n_sub_sel")
-                
-                # --- AQUÍ ESTÁ EL ARREGLO PARA EL CÓDIGO AUTOMÁTICO ---
                 sku_sugerido = generar_sku(n_cat, n_sub)
-                # Al usar el SKU sugerido en el 'key', forzamos a Streamlit a refrescar el input
                 n_sku = st.text_input("Código", value=sku_sugerido, key=f"sku_input_{sku_sugerido}")
-                
                 n_nom = st.text_input("Nombre", key="n_nom_inp")
                 n_color = st.text_input("Color", key="n_color_inp")
             with c_n2:
@@ -198,17 +194,24 @@ elif menu == "Inventario":
                 n_foto = st.file_uploader("Imagen", type=['jpg','png','jpeg'], key="n_foto_inp")
             
             if st.button("🚀 Guardar Producto", key="btn_save_final"):
-                if n_nom and n_foto:
-                    fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
-                    supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
-                    url = supabase.storage.from_("fotos").get_public_url(fn)
-                    supabase.table("productos").insert({
-                        "codigo": n_sku.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
-                        "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
-                        "color": n_color, "piezas": n_piezas
-                    }).execute()
-                    st.success(f"Producto {n_sku} guardado con éxito")
-                    st.rerun()
+                if not n_nom:
+                    st.error("Debes escribir un nombre para el producto.")
+                elif not n_foto:
+                    st.error("Debes subir una imagen para el producto.")
+                else:
+                    try:
+                        fn = f"{n_sku}_{datetime.now().strftime('%H%M%S')}.jpg"
+                        supabase.storage.from_("fotos").upload(fn, n_foto.getvalue())
+                        url = supabase.storage.from_("fotos").get_public_url(fn)
+                        supabase.table("productos").insert({
+                            "codigo": n_sku.upper(), "nombre": n_nom, "categoria": n_cat, "subcategoria": n_sub,
+                            "precio_inv": n_inv, "precio_pub": n_pub, "stock": n_stk, "foto_path": url,
+                            "color": n_color, "piezas": n_piezas
+                        }).execute()
+                        st.success(f"Producto {n_sku} guardado con éxito")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al guardar: {e}")
 
     with tabs[2]:
         if st.session_state.edit_id:
@@ -225,12 +228,15 @@ elif menu == "Inventario":
                 
                 c_eb1, c_eb2 = st.columns(2)
                 if c_eb1.button("💾 Guardar Cambios", type="primary", key="e_save_btn"):
-                    supabase.table("productos").update({
-                        "nombre": e_nom, "color": e_color, "piezas": e_piezas,
-                        "precio_pub": e_pub, "precio_inv": e_inv, "stock": e_stk
-                    }).eq("id", st.session_state.edit_id).execute()
-                    st.session_state.edit_id = None
-                    st.success("Actualizado"); st.rerun()
+                    try:
+                        supabase.table("productos").update({
+                            "nombre": e_nom, "color": e_color, "piezas": e_piezas,
+                            "precio_pub": e_pub, "precio_inv": e_inv, "stock": e_stk
+                        }).eq("id", st.session_state.edit_id).execute()
+                        st.session_state.edit_id = None
+                        st.success("Actualizado"); st.rerun()
+                    except Exception as e:
+                        st.error(f"Error al actualizar: {e}")
                 if c_eb2.button("❌ Cancelar", key="e_cancel_btn"):
                     st.session_state.edit_id = None
                     st.rerun()

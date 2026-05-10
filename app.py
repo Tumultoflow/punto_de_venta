@@ -65,7 +65,6 @@ if not st.session_state.auth:
 # --- 5. NAVEGACIÓN ---
 with st.sidebar:
     st.title(f"🚀 {st.session_state.role.upper()}")
-    # Si estamos editando, forzamos a que solo vea "Inventario" o "Cancelar"
     if st.session_state.edit_id:
         st.warning("⚠️ Modo Edición Activo")
         if st.button("❌ Cancelar Edición", use_container_width=True):
@@ -101,7 +100,9 @@ if menu == "Ventas":
             
             c1, c2 = st.columns([1, 2])
             with c1:
-                if item.get('foto_path'): st.image(item['foto_path'], width=250)
+                f_url = item.get('foto_path')
+                if f_url and str(f_url).startswith("http"):
+                    st.image(f_url, width=250)
                 else: st.info("Sin imagen")
             with c2:
                 data_desc = cargar_json_seguro(item['descripcion'])
@@ -162,9 +163,8 @@ if menu == "Ventas":
 
 # --- SECCIÓN: INVENTARIO ---
 elif menu == "Inventario":
-    # Lógica para mostrar EDITOR directamente si hay un edit_id
     if st.session_state.edit_id:
-        st.header("✏️ Editor de Producto")
+        st.header("✏️ Editor Maestro")
         p = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
         
         cats_opc = [c['valor'] for c in obtener_config("categoria")] or ["GENERAL"]
@@ -182,10 +182,10 @@ elif menu == "Inventario":
             e_foto = st.file_uploader("Cambiar Foto", type=["jpg","png","jpeg"], key="ed_foto")
         
         with ce2:
-            st.write("**Ajustar Stock por Variante**")
+            st.write("**Variantes Existentes**")
             ex_c = st.text_input("Color", key="v_c_ed").upper().strip()
             ex_t = st.text_input("Talla", key="v_t_ed").upper().strip()
-            ex_s = st.number_input("Cantidad", 0, key="v_s_ed")
+            ex_s = st.number_input("Stock", 0, key="v_s_ed")
             if st.button("➕ Actualizar Variante", key="btn_v_ed"):
                 if ex_c and ex_t:
                     st.session_state.temp_matriz.setdefault(ex_c, {})[ex_t] = int(ex_s)
@@ -202,7 +202,7 @@ elif menu == "Inventario":
                             if not st.session_state.temp_matriz[cn]: del st.session_state.temp_matriz[cn]
                             st.rerun()
 
-        if st.button("💾 GUARDAR CAMBIOS Y SALIR", type="primary", use_container_width=True):
+        if st.button("💾 GUARDAR CAMBIOS", type="primary", use_container_width=True):
             url = subir_imagen_supabase(e_foto, e_sku) or p['foto_path']
             st.session_state.temp_matriz["_info_extra"] = e_desc
             v_val = {k: v for k, v in st.session_state.temp_matriz.items() if k != "_info_extra"}
@@ -214,9 +214,8 @@ elif menu == "Inventario":
                 "descripcion": json.dumps(st.session_state.temp_matriz), "foto_path": url
             }).eq("id", st.session_state.edit_id).execute()
             
-            st.session_state.edit_id = None
-            st.session_state.temp_matriz = {}
-            st.success("✅ Producto actualizado")
+            st.session_state.edit_id, st.session_state.temp_matriz = None, {}
+            st.success("✅ Cambios aplicados")
             st.rerun()
 
     else:
@@ -232,16 +231,19 @@ elif menu == "Inventario":
                 if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
                 for _, r in df_i.iterrows():
                     c1, c2, c3, c4 = st.columns([1, 4, 0.5, 0.5])
-                    if r.get('foto_path'): c1.image(r['foto_path'], width=80)
+                    
+                    # --- FIX: VALIDACIÓN DE IMAGEN REFORZADA ---
+                    img_path = r.get('foto_path')
+                    if img_path and str(img_path).startswith("http"):
+                        c1.image(img_path, width=80)
                     else: c1.write("🚫")
+                    
                     c2.write(f"**{r['codigo']}** - {r['nombre']}")
                     c2.caption(f"Stock: {r['stock']} | {r['categoria']} > {r['subcategoria']}")
                     if st.session_state.role == "admin":
                         if c3.button("✏️", key=f"e_{r['id']}"):
-                            # --- LIMPIEZA TOTAL Y CAMBIO DE MODO ---
-                            st.session_state.temp_matriz = {}
-                            st.session_state.edit_id = r['id']
                             st.session_state.temp_matriz = cargar_json_seguro(r['descripcion'])
+                            st.session_state.edit_id = r['id']
                             st.rerun()
                         if c4.button("🗑️", key=f"d_{r['id']}"):
                             supabase.table("productos").delete().eq("id", r['id']).execute(); st.rerun()
@@ -255,14 +257,14 @@ elif menu == "Inventario":
                 n_cat = st.selectbox("Categoría", cats)
                 n_sub = st.selectbox("Subcategoría", subs)
                 n_sku = st.text_input("Código (SKU)", value=generar_sku(n_cat, n_sub))
-                n_nom = st.text_input("Nombre del artículo")
-                n_pub = st.number_input("Precio Venta", 0.0)
-                n_inv = st.number_input("Precio Inversión", 0.0)
+                n_nom = st.text_input("Nombre")
+                n_pub = st.number_input("Venta", 0.0)
+                n_inv = st.number_input("Costo", 0.0)
                 n_desc = st.text_area("Notas")
-                n_foto = st.file_uploader("Imagen", type=["jpg","png","jpeg"])
+                n_foto = st.file_uploader("Foto", type=["jpg","png","jpeg"])
             with c_n2:
                 st.write("**Variantes**")
-                v_c, v_t, v_s = st.text_input("Color Nuevo"), st.text_input("Talla Nueva"), st.number_input("Stock Inicial", 0)
+                v_c, v_t, v_s = st.text_input("Color "), st.text_input("Talla "), st.number_input("Stock Inicial", 0)
                 if st.button("➕ Añadir"):
                     if v_c and v_t:
                         st.session_state.temp_matriz.setdefault(v_c.upper().strip(), {})[v_t.upper().strip()] = int(v_s)
@@ -310,4 +312,4 @@ elif menu == "Reportes" and st.session_state.role == "admin":
         st.metric("Venta Bruta", f"${df['precio_total'].sum():,.2f}")
         st.metric("Ganancia Neta", f"${df['ganancia'].sum():,.2f}")
         st.dataframe(df[["fecha_venta", "producto", "cantidad", "precio_total", "vendedor", "metodo_pago"]])
-    else: st.warning("Sin ventas registradas.")
+    else: st.warning("Sin ventas.")

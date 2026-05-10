@@ -44,10 +44,27 @@ if not st.session_state.auth:
         if u == "admin" and p == "admin1": 
             st.session_state.auth, st.session_state.role = True, "admin"
             st.rerun()
+        elif u == "equipo" and p == "equipo1":
+            st.session_state.auth, st.session_state.role = True, "equipo"
+            st.rerun()
+        else: st.error("Credenciales incorrectas")
     st.stop()
 
-# --- 5. NAVEGACIÓN ---
-menu = st.sidebar.radio("MENÚ PRINCIPAL", ["Ventas", "Inventario", "Configuración", "Reportes"])
+# --- 5. NAVEGACIÓN (CON BOTÓN DE CIERRE SESIÓN) ---
+with st.sidebar:
+    st.title("⚖️ MENU")
+    opciones_menu = ["Ventas", "Inventario"]
+    if st.session_state.role == "admin": 
+        opciones_menu += ["Configuración", "Reportes"]
+    
+    menu = st.radio("Ir a:", opciones_menu)
+    
+    st.divider()
+    if st.button("🚪 Cerrar Sesión", use_container_width=True, type="secondary"):
+        st.session_state.auth = False
+        st.session_state.role = None
+        st.session_state.carrito = []
+        st.rerun()
 
 # --- SECCIÓN: VENTAS ---
 if menu == "Ventas":
@@ -69,7 +86,6 @@ if menu == "Ventas":
                 if item.get('foto_path'): st.image(item['foto_path'], width=200)
             
             with c2:
-                # Verificar si tiene matriz JSON
                 try:
                     matriz = json.loads(item['descripcion']) if item['descripcion'] and item['descripcion'].startswith('{') else None
                 except: matriz = None
@@ -101,7 +117,6 @@ if menu == "Ventas":
             st.table(pd.DataFrame(st.session_state.carrito)[['nombre', 'cantidad', 'precio']])
             if st.button("🚀 FINALIZAR VENTA", type="primary", use_container_width=True):
                 for p in st.session_state.carrito:
-                    # 1. Actualizar Stock en Producto
                     prod_db = supabase.table("productos").select("*").eq("id", p['id']).execute().data[0]
                     nuevo_total = prod_db['stock'] - p['cantidad']
                     if p['es_matriz']:
@@ -111,12 +126,11 @@ if menu == "Ventas":
                     else:
                         supabase.table("productos").update({"stock": nuevo_total}).eq("id", p['id']).execute()
                     
-                    # 2. Registrar Venta (Guardamos meta-data en 'color' para poder anular)
                     meta_venta = json.dumps({"es_matriz": p['es_matriz'], "v_col": p['v_col'], "v_tal": p['v_tal']})
                     supabase.table("ventas").insert({
                         "producto": p['nombre'], "codigo_prod": p['codigo'], "cantidad": p['cantidad'],
                         "precio_total": p['precio'] * p['cantidad'], "ganancia": (p['precio'] - p['precio_inv']) * p['cantidad'],
-                        "vendedor": "ADMIN", "fecha_venta": datetime.now(ZONA_LOCAL).isoformat(), "color": meta_venta
+                        "vendedor": st.session_state.role.upper(), "fecha_venta": datetime.now(ZONA_LOCAL).isoformat(), "color": meta_venta
                     }).execute()
                 st.session_state.carrito = []
                 st.success("Venta Registrada"); st.rerun()
@@ -132,11 +146,12 @@ elif menu == "Inventario":
         res_i = supabase.table("productos").select("*").order("codigo").execute()
         if res_i.data:
             df_i = pd.DataFrame(res_i.data)
-            if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False)]
+            if busq_i: df_i = df_i[df_i['nombre'].str.contains(busq_i, case=False) | df_i['codigo'].str.contains(busq_i, case=False)]
             for _, r in df_i.iterrows():
                 c_im, c_tx, c_ac = st.columns([1, 4, 1])
-                if r['foto_path']: c_im.image(r['foto_path'], width=60)
-                c_tx.write(f"**{r['codigo']}** - {r['nombre']} | Stock: {r['stock']} | ${r['precio_pub']}")
+                if r['foto_path']: c_im.image(r['foto_path'], width=70)
+                c_tx.write(f"**{r['codigo']}** - {r['nombre']}")
+                c_tx.caption(f"Stock: {r['stock']} | P. Público: ${r['precio_pub']}")
                 if c_ac.button("✏️", key=f"e_{r['id']}"):
                     st.session_state.edit_id = r['id']
                     st.rerun()
@@ -155,9 +170,9 @@ elif menu == "Inventario":
             n_foto = st.file_uploader("Imagen")
         with c_n2:
             st.write("**Panel de Variantes**")
-            m_col = st.text_input("Color (ej: Azul)", key="mc")
-            m_tal = st.text_input("Talla/Pieza (ej: M)", key="mt")
-            m_can = st.number_input("Stock", 0, key="mq")
+            m_col = st.text_input("Color", key="mc")
+            m_tal = st.text_input("Talla / Pieza", key="mt")
+            m_can = st.number_input("Stock inicial", 0, key="mq")
             if st.button("Añadir Variante"):
                 if m_col and m_tal:
                     if m_col not in st.session_state.temp_matriz: st.session_state.temp_matriz[m_col] = {}
@@ -165,7 +180,7 @@ elif menu == "Inventario":
             st.write(st.session_state.temp_matriz)
             if st.button("Limpiar Variantes"): st.session_state.temp_matriz = {}
 
-        if st.button("🚀 GUARDAR TODO"):
+        if st.button("🚀 GUARDAR PRODUCTO"):
             total_stk = sum(sum(t.values()) for t in st.session_state.temp_matriz.values())
             url = ""
             if n_foto:
@@ -186,11 +201,12 @@ elif menu == "Inventario":
             p_ed = supabase.table("productos").select("*").eq("id", st.session_state.edit_id).execute().data[0]
             e_nom = st.text_input("Nombre", value=p_ed['nombre'])
             e_pre = st.number_input("Precio Venta", value=float(p_ed['precio_pub']))
+            e_stk = st.number_input("Stock Total (Ajuste Manual)", value=int(p_ed['stock']))
             if st.button("💾 Guardar Cambios"):
-                supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pre}).eq("id", st.session_state.edit_id).execute()
+                supabase.table("productos").update({"nombre": e_nom, "precio_pub": e_pre, "stock": e_stk}).eq("id", st.session_state.edit_id).execute()
                 st.session_state.edit_id = None
                 st.rerun()
-        else: st.info("Selecciona un producto en la lista para editar.")
+            if st.button("Cancelar"): st.session_state.edit_id = None; st.rerun()
 
 # --- SECCIÓN: CONFIGURACIÓN ---
 elif menu == "Configuración":
@@ -208,7 +224,7 @@ elif menu == "Configuración":
             df_cfg = pd.DataFrame(res_cfg.data)
             for _, r in df_cfg.iterrows():
                 col1, col2 = st.columns([3, 1])
-                col1.write(f"{r['tipo']}: {r['valor']}")
+                col1.write(f"**{r['tipo']}**: {r['valor']}")
                 if col2.button("🗑️", key=f"c_{r['id']}"):
                     supabase.table("configuracion").delete().eq("id", r['id']).execute(); st.rerun()
 
@@ -222,9 +238,8 @@ elif menu == "Reportes":
         
         st.divider()
         id_can = st.selectbox("Anular Venta por ID", df_v['id'].tolist())
-        if st.button("❌ ANULAR VENTA SELECCIONADA"):
+        if st.button("❌ ANULAR VENTA SELECCIONADA", type="primary"):
             v_info = df_v[df_v['id'] == id_can].iloc[0]
-            # Devolver Stock
             p_db = supabase.table("productos").select("*").eq("codigo", v_info['codigo_prod']).execute().data[0]
             try:
                 meta = json.loads(v_info['color'])
@@ -239,4 +254,4 @@ elif menu == "Reportes":
                 supabase.table("productos").update({"stock": nuevo_stk}).eq("id", p_db['id']).execute()
             
             supabase.table("ventas").delete().eq("id", id_can).execute()
-            st.success("Venta anulada y stock devuelto"); st.rerun()
+            st.success("Venta anulada"); st.rerun()
